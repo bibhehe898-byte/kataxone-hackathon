@@ -1,10 +1,22 @@
 import { addEdge, applyEdgeChanges, applyNodeChanges, MarkerType } from 'reactflow'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { createEdge, initialAfterFlow, initialBeforeFlow } from '../data/vsmData'
 import { useAuthStore } from './useAuthStore'
 
 const API_URL = 'http://127.0.0.1:8000'
+
+/**
+ * Приводит путь, полученный от бэкенда, к абсолютному URL.
+ * '/static/uploads/x.jpg' -> 'http://127.0.0.1:8000/static/uploads/x.jpg'
+ * Легаси '/uploads/x.jpg' бэкенд отдаёт по '/static/uploads/x.jpg'.
+ * Абсолютные / data: / blob: URL не трогаем.
+ */
+const resolveBackendUrl = (url) => {
+  if (typeof url !== 'string' || !url) return url
+  if (/^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(url) || /^(data|blob):/i.test(url)) return url
+  const path = url.startsWith('/uploads/') ? `/static${url}` : url
+  return path.startsWith('/') ? `${API_URL}${path}` : path
+}
 
 const cloneFlow = (flow) => structuredClone(flow)
 
@@ -15,27 +27,7 @@ const generateWorkshopId = () => {
   return `w-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
-const INITIAL_WORKSHOPS = [
-  {
-    id: 'w1',
-    name: 'Цех 1 (Текущий)',
-    nodes: cloneFlow(initialBeforeFlow.nodes),
-    edges: cloneFlow(initialBeforeFlow.edges),
-  },
-  {
-    id: 'w2',
-    name: 'Цех 2 (Целевой)',
-    nodes: cloneFlow(initialAfterFlow.nodes),
-    edges: cloneFlow(initialAfterFlow.edges),
-  },
-]
-
-const defaultForWorkshop = (workshop) => {
-  if (workshop.id === 'w1') return initialBeforeFlow
-  if (workshop.id === 'w2') return initialAfterFlow
-  return { nodes: [], edges: [] }
-}
-
+// Локальная замена удаленной функции из vsmData.js
 const NEW_EDGE_DEFAULTS = {
   type: 'smoothstep',
   markerEnd: {
@@ -45,6 +37,33 @@ const NEW_EDGE_DEFAULTS = {
     color: 'rgba(148, 178, 204, 0.55)',
   },
   style: { stroke: 'rgba(148, 178, 204, 0.42)', strokeWidth: 1.6 },
+}
+
+const createEdge = (source, target) => ({
+  id: `e-${source}-${target}-${Math.random().toString(36).slice(2, 7)}`,
+  source,
+  target,
+  ...NEW_EDGE_DEFAULTS,
+})
+
+// Начальные цеха теперь пустые, так как данные приходят с сервера
+const INITIAL_WORKSHOPS = [
+  {
+    id: 'w1',
+    name: 'Цех 1 (Текущий)',
+    nodes: [],
+    edges: [],
+  },
+  {
+    id: 'w2',
+    name: 'Цех 2 (Целевой)',
+    nodes: [],
+    edges: [],
+  },
+]
+
+const defaultForWorkshop = () => {
+  return { nodes: [], edges: [] }
 }
 
 const updateActiveWorkshop = (state, updater) => {
@@ -248,8 +267,31 @@ export const useVsmStore = create(persist((set, get) => ({
     }
   },
 
+  uploadPanorama: async (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await fetch(`${API_URL}/api/upload/panorama`, {
+      method: 'POST',
+      body: formData,
+    })
+    if (!response.ok) {
+      throw new Error(`Не удалось загрузить панораму: ${response.status}`)
+    }
+    const data = await response.json()
+    if (!data?.url) return
+    set((state) =>
+      updateActiveWorkshop(state, (workshop) => ({
+        ...workshop,
+        // Сразу абсолютный URL: Pannellum не должен резолвить его от Vite-origin (:5173).
+        panorama_url: resolveBackendUrl(data.url),
+      })),
+    )
+    await get().saveFlowToServer()
+  },
+
   loadFlowFromServer: async () => {
     const token = useAuthStore.getState().token
+    if (!token) return
     const response = await fetch(`${API_URL}/api/workshops`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -263,21 +305,28 @@ export const useVsmStore = create(persist((set, get) => ({
     // Пустой массив тоже ничего не делаем — иначе затёрли бы локальные цеха.
     if (!Array.isArray(workshops) || workshops.length === 0) return
 
+    // Легаси-значения из БД/localStorage (/uploads/... или относительные пути)
+    // приводим к абсолютному URL бэкенда.
+    const normalized = workshops.map((workshop) =>
+      workshop?.panorama_url
+        ? { ...workshop, panorama_url: resolveBackendUrl(workshop.panorama_url) }
+        : workshop,
+    )
+
     set({
-      workshops,
-      activeWorkshopId: workshops[0]?.id ?? 'w1',
+      workshops: normalized,
+      activeWorkshopId: normalized[0]?.id || 'w1',
     })
   },
 }), {
   name: 'kataxone-vsm-v2',
-  version: 5,
+  version: 6,
   // Сохраняем только сами цеха. activeWorkshopId намеренно не персистим:
   // после F5 активным снова становится первый цех (w1), но созданные цеха не теряются.
   partialize: (state) => ({ workshops: state.workshops }),
-  // Данные версии < 5 могли содержать цеха без ID (или с одинаковыми ID) —
-  // из-за этого табы «слипались». Принудительно сбрасываем их на чистые INITIAL_WORKSHOPS.
+  // Принудительно сбрасываем на чистые INITIAL_WORKSHOPS.
   migrate: (persistedState, version) =>
-    version < 5 ? { workshops: cloneFlow(INITIAL_WORKSHOPS) } : persistedState,
+    version < 6 ? { workshops: cloneFlow(INITIAL_WORKSHOPS) } : persistedState,
   merge: (persistedState, currentState) => {
     // Страховка: если битые данные всё же просочились (цех без id) — генерируем id.
     const workshops = Array.isArray(persistedState.workshops)
@@ -285,10 +334,16 @@ export const useVsmStore = create(persist((set, get) => ({
           workshop?.id ? workshop : { ...workshop, id: generateWorkshopId() },
         )
       : cloneFlow(INITIAL_WORKSHOPS)
+    // Легаси-ссылки на панорамы из localStorage тоже приводим к URL бэкенда.
+    const normalizedWorkshops = workshops.map((workshop) =>
+      workshop?.panorama_url
+        ? { ...workshop, panorama_url: resolveBackendUrl(workshop.panorama_url) }
+        : workshop,
+    )
     return {
       ...currentState,
       ...persistedState,
-      workshops,
+      workshops: normalizedWorkshops,
       activeWorkshopId: currentState.activeWorkshopId,
     }
   },

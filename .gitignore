@@ -26,8 +26,12 @@ dist-ssr
 *.sln
 *.sw?
 
+# Пользовательские загрузки (панорамы, планы, фото рабочих мест)
+public/uploads/
+
 # Python / FastAPI backend
 backend/kataxone.db
+backend/static/uploads/
 __pycache__/
 *.pyc
 .venv/

@@ -12,7 +12,9 @@ DB_PATH = Path(os.environ.get("KATAXONE_DB_PATH", BASE_DIR / "kataxone.db"))
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 # Папка для пользовательских 360°-панорам, планов и фото рабочих мест.
-# Абсолютный путь: <repo>/public/uploads (совпадает с .gitignore/.rooignore).
+# Исторический путь: <repo>/public/uploads. Сейчас загрузки пишутся в
+# backend/static/uploads (см. backend/main.py); каталог здесь нужен для
+# одноразовой миграции старых файлов.
 PUBLIC_DIR = BASE_DIR.parent / "public"
 UPLOADS_DIR = PUBLIC_DIR / "uploads"
 

@@ -77,7 +77,7 @@ export default function TourPage() {
   }
 
   // ---------- 360° ----------
-  const panorama = assetUrl(workshop?.panorama_url) || `${import.meta.env.BASE_URL}panoramas/workshop-placeholder.png`
+  const panorama = assetUrl(workshop?.panorama_url)
   const pois = workshop?.pois ?? []
 
   const config = useMemo(
@@ -134,8 +134,16 @@ export default function TourPage() {
 
   const onUpload = async (e) => {
     const file = e.target.files?.[0]
-    if (file && workshop) await setPanorama(workshop.id, file)
     e.target.value = ''
+    if (!file || !workshop) return
+    try {
+      const vsm = useVsmStore.getState()
+      vsm.setActiveWorkshop(`ws-${workshop.id}`)
+      await vsm.uploadPanorama(file)
+      await loadEnterprises()
+    } catch {
+      await setPanorama(workshop.id, file)
+    }
   }
 
   if (!workshop) {
@@ -168,7 +176,11 @@ export default function TourPage() {
             className={`tour3d-pano${constructor ? ' is-constructor' : ''}`}
             onClickCapture={onPanoClick}
           >
-            <PannellumViewer config={config} onReady={onReady} className="tour-viewer" />
+            {workshop.panorama_url ? (
+              <PannellumViewer config={config} onReady={onReady} className="tour-viewer" />
+            ) : (
+              <div className="tour3d-empty">Панорама не загружена</div>
+            )}
           </div>
         )}
       </div>
@@ -283,8 +295,8 @@ export default function TourPage() {
 
       {mode === '3d' && showLegend && showHeat && (
         <div className="tour3d-legend">
-          {LEGEND.map((h) => (
-            <span key={h.key}>
+          {LEGEND.map((h, i) => (
+            <span key={`${h.key}-${i}`}>
               <i style={{ background: h.color }} /> {h.label}
             </span>
           ))}

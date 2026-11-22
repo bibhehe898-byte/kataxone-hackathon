@@ -38,7 +38,7 @@
 6. **Новые API-эндпоинты:**
    - `GET /api/enterprises`, `POST /api/enterprises` — список и создание новых предприятий.
    - `GET /api/enterprises/{id}/export` и `POST /api/enterprises/import` — полный экспорт/импорт предприятия в JSON.
-   - `POST /api/upload` — загрузка пользовательских 360°-панорам, планов цеха и фото рабочих мест в `public/uploads/`.
+   - `POST /api/upload` и `POST /api/upload/panorama` — загрузка пользовательских 360°-панорам, планов цеха и фото рабочих мест в `backend/static/uploads/` (отдаются по `/static/uploads/...`).
 
 ---
 

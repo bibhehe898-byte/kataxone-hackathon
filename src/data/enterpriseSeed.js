@@ -89,7 +89,7 @@ function buildWorkshop(entId, isBaseline) {
     id: wid, enterprise_id: entId,
     name: `${PILOT_WORKSHOP_NAME} — Раунд ${isBaseline ? '1 «Как есть»' : '2 «Как будет»'}`,
     width_m: 6.15, length_m: 18.4, table_w_m: 1.0, table_d_m: 0.7, table_h_m: 0.82,
-    panorama_url: '/panoramas/workshop-placeholder.png', explosion_diagram_url: null,
+    panorama_url: null, explosion_diagram_url: null,
     nodes, edges, pois,
   }
 }
@@ -122,7 +122,7 @@ export function buildDefaultWorkshop(entId, name = 'Основной цех') {
   ]
   return {
     id: wid, enterprise_id: entId, name, width_m: 6.15, length_m: 18.4, table_w_m: 1, table_d_m: 0.7,
-    table_h_m: 0.82, panorama_url: '/panoramas/workshop-placeholder.png', explosion_diagram_url: null,
+    table_h_m: 0.82, panorama_url: null, explosion_diagram_url: null,
     nodes, edges: [], pois: [],
   }
 }

@@ -1,4 +1,6 @@
 import json
+import os
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -6,6 +8,7 @@ from typing import List
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -16,7 +19,7 @@ from . import models, schemas, seed, services
 from .database import (
     SCHEMA_VERSION,
     SessionLocal,
-    UPLOADS_DIR,
+    UPLOADS_DIR as PUBLIC_UPLOADS_DIR,
     engine,
     get_db,
     get_stored_schema_version,
@@ -47,9 +50,30 @@ if get_stored_schema_version() != SCHEMA_VERSION:
     models.Base.metadata.create_all(bind=engine)
     set_stored_schema_version(SCHEMA_VERSION)
 
-# Папка для пользовательских загрузок (панорамы, планы, фото рабочих мест).
-UPLOADS_DIR = Path(UPLOADS_DIR)
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+# ---------------------------------------------------------------------------
+# Статика и пользовательские загрузки (360°-панорамы, планы, фото рабочих мест)
+# ---------------------------------------------------------------------------
+# Абсолютные пути не зависят от рабочей директории процесса uvicorn.
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+UPLOADS_DIR = STATIC_DIR / "uploads"  # backend/static/uploads
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+
+# Легаси-каталог <repo>/public/uploads: раньше сюда писал /api/upload, а фронтенд
+# запрашивал файл у бэкенда (/static/uploads/...) и получал 404. Копируем уже
+# загруженные файлы в статику, чтобы сохранённые ссылки продолжили работать.
+LEGACY_UPLOADS_DIR = Path(PUBLIC_UPLOADS_DIR)
+
+
+def _migrate_legacy_uploads() -> None:
+    if not LEGACY_UPLOADS_DIR.is_dir():
+        return
+    for legacy_file in LEGACY_UPLOADS_DIR.iterdir():
+        target = UPLOADS_DIR / legacy_file.name
+        if legacy_file.is_file() and not target.exists():
+            shutil.copy2(legacy_file, target)
+
+
+_migrate_legacy_uploads()
 
 app = FastAPI(title="Kataxone Enterprise Backend", version="2.0.0")
 
@@ -454,6 +478,42 @@ def create_workshop_poi(
 # ---------------------------------------------------------------------------
 
 
+PANORAMA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+@app.post("/api/upload/panorama")
+async def upload_panorama(file: UploadFile = File(...)):
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in PANORAMA_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Недопустимый тип файла: {suffix or 'без расширения'}",
+        )
+    content = await file.read()
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Файл слишком большой (лимит 25 МБ)")
+
+    unique_filename = f"{uuid.uuid4().hex}{suffix}"
+    # Папку создаём и перед записью: её могли удалить при работающем сервере.
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    (UPLOADS_DIR / unique_filename).write_bytes(content)
+
+    # Путь всегда начинается с /static/uploads/ и отдаётся StaticFiles-маунтом.
+    # Фронтенд добавляет origin бэкенда (http://127.0.0.1:8000).
+    return {
+        "url": f"/static/uploads/{unique_filename}",
+        "filename": unique_filename,
+        "original_name": file.filename,
+        "size": len(content),
+    }
+
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+# Алиас для легаси-ссылок /uploads/<name> (этот префикс проксирует Vite),
+# чтобы старые относительные пути тоже открывались, а не давали 404.
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+
+
 @app.post("/api/upload", status_code=status.HTTP_201_CREATED)
 async def upload_file(file: UploadFile = File(...)):
     suffix = Path(file.filename or "").suffix.lower()
@@ -462,14 +522,16 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"Недопустимый тип файла: {suffix or 'без расширения'}")
 
     unique_name = f"{uuid.uuid4().hex}{suffix}"
-    target = UPLOADS_DIR / unique_name
     content = await file.read()
     if len(content) > 25 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Файл слишком большой (лимит 25 МБ)")
-    target.write_bytes(content)
 
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    (UPLOADS_DIR / unique_name).write_bytes(content)
+
+    # Тот же каталог, который отдаёт StaticFiles: /static/uploads/<name>.
     return {
-        "url": f"/uploads/{unique_name}",
+        "url": f"/static/uploads/{unique_name}",
         "filename": unique_name,
         "original_name": file.filename,
         "size": len(content),
