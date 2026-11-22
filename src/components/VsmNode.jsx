@@ -1,5 +1,5 @@
 import { Clock, Gauge, Timer, Wallet } from 'lucide-react'
-import { Handle, Position } from 'reactflow'
+import { Handle, Position } from '@xyflow/react'
 
 const KIND_LABELS = {
   operation: 'Операция',

@@ -1,14 +1,15 @@
 import { CloudDownload, CloudUpload, Layers, MousePointer2, Plus, RotateCcw, Save, ScanEye, Trash2, Workflow, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import ReactFlow, {
+import {
   Background,
   Controls,
   MiniMap,
+  ReactFlow,
   ReactFlowProvider,
   useReactFlow,
-} from 'reactflow'
-import 'reactflow/dist/style.css'
+} from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
 import VsmNode from '../components/VsmNode'
 import { useVsmStore } from '../store/useVsmStore'
 import { useEnterpriseStore } from '../store/useEnterpriseStore'

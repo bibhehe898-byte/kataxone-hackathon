@@ -1,4 +1,4 @@
-import { addEdge, applyEdgeChanges, applyNodeChanges, MarkerType } from 'reactflow'
+import { addEdge, applyEdgeChanges, applyNodeChanges, MarkerType } from '@xyflow/react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { useAuthStore } from './useAuthStore'
