@@ -113,7 +113,7 @@ export const useVsmStore = create(persist((set, get) => ({
   syncFromEnterprise: (enterprise) => {
     if (!enterprise?.workshops?.length) return
     const takt = enterprise.takt_time_sec || 120
-    const workshops = enterprise.workshops.map((ws) => {
+    const enterpriseWorkshops = enterprise.workshops.map((ws) => {
       const ops = ws.nodes
         .filter((n) => n.kind === 'operation' || n.kind === 'control')
         .sort((a, b) => a.step_number - b.step_number)
@@ -135,6 +135,11 @@ export const useVsmStore = create(persist((set, get) => ({
       return { id: `ws-${ws.id}`, name: ws.name, nodes, edges }
     })
     set((state) => {
+      // Сохраняем локально созданные цеха (id вида w-<uuid>), а начальные
+      // заглушки w1/w2 и enterprise-цеха ws-<id> не переносим. Иначе синхронизация
+      // с предприятием стирала бы пользовательские цеха и ломала активную вкладку.
+      const localWorkshops = state.workshops.filter((w) => String(w.id).startsWith('w-'))
+      const workshops = [...enterpriseWorkshops, ...localWorkshops]
       const keep = workshops.some((w) => w.id === state.activeWorkshopId)
       return { workshops, activeWorkshopId: keep ? state.activeWorkshopId : workshops[0].id }
     })
@@ -249,6 +254,9 @@ export const useVsmStore = create(persist((set, get) => ({
             kind: 'operation',
             cycleTime: 0,
             leadTime: 5,
+            load: 0,
+            cost: 0,
+            bottleneck: false,
           },
         }
 

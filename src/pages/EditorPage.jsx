@@ -184,15 +184,15 @@ export default function EditorPage() {
   }
 
   const openAddWorkshop = () => {
+    setEditing(null)
     setWorkshopName('')
     setWorkshopModal(true)
   }
 
   const submitWorkshop = (event) => {
     event.preventDefault()
-    const name = workshopName.trim()
-    if (!name) return
-    addWorkshop(name)
+    // addWorkshop сам подставит имя по умолчанию, если поле пустое.
+    addWorkshop(workshopName)
     setWorkshopModal(false)
     setWorkshopName('')
   }
@@ -260,7 +260,7 @@ export default function EditorPage() {
   }
 
   return (
-    <ReactFlowProvider>
+    <ReactFlowProvider key={activeWorkshop?.id ?? 'empty'}>
       <div className="page editor-page">
         <header className="page-header">
           <div>
