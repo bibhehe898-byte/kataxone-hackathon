@@ -18,6 +18,24 @@ const resolveBackendUrl = (url) => {
   return path.startsWith('/') ? `${API_URL}${path}` : path
 }
 
+/**
+ * Текущий JWT. Читаем из стора в момент запроса, а не при создании замыкания:
+ * после логина/логаута токен меняется без пересоздания стора.
+ */
+const authToken = () => useAuthStore.getState().token
+
+/**
+ * Заголовки с авторизацией.
+ * Без токена заголовок не отправляем: `Bearer null` бэкенд отклоняет с 401.
+ */
+const authHeaders = (extra = {}) => {
+  const token = authToken()
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : { ...extra }
+}
+
+/** 401/403 — токен отсутствует или просрочен: сбрасываем сессию, чтобы UI показал вход. */
+const isUnauthorized = (response) => response.status === 401 || response.status === 403
+
 const cloneFlow = (flow) => structuredClone(flow)
 
 const generateWorkshopId = () => {
@@ -109,7 +127,7 @@ export const useVsmStore = create(persist((set, get) => ({
           cycleTime: n.cycle_time_sec,
           leadTime: n.cycle_time_sec,
           load: Math.round((n.cycle_time_sec / takt) * 100),
-          cost: 0,
+          cost: n.cost !== undefined ? n.cost : (n.cost_value || 0),
           bottleneck: n.is_bottleneck,
         },
       }))
@@ -211,13 +229,14 @@ export const useVsmStore = create(persist((set, get) => ({
     set((state) =>
       updateActiveWorkshop(state, (workshop) => {
         const lastNode = workshop.nodes.at(-1)
-        // ID этапа выводим из уже существующих узлов цеха, чтобы после F5
-        // не создавались дубликаты (модульный счётчик обнулялся бы при перезагрузке).
-        const stepNumber = workshop.nodes.reduce((max, node) => {
-          const match = /^step-(\d+)$/.exec(node.id ?? '')
-          return match ? Math.max(max, Number(match[1])) : max
-        }, 0) + 1
-        const id = `step-${stepNumber}`
+        // Уникальный ID вместо счётчика `step-1`: серверные узлы имеют id `n-<id>`,
+        // поэтому regex /^step-(\d+)$/ их не находил, счётчик всегда давал 1 и
+        // создавались дубликаты `step-1`, которые React Flow не отрисовывает.
+        const id = `step-${
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+        }`
         const newNode = {
           id,
           type: 'vsm',
@@ -253,15 +272,19 @@ export const useVsmStore = create(persist((set, get) => ({
     ),
 
   saveFlowToServer: async () => {
-    const token = useAuthStore.getState().token
+    // Без токена запрос заведомо вернёт 401 — сразу сообщаем вызывающему коду.
+    if (!authToken()) {
+      throw new Error('Нет авторизации: войдите, чтобы сохранить цеха на сервер')
+    }
     const response = await fetch(`${API_URL}/api/workshops`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ workshops: get().workshops }),
     })
+    if (isUnauthorized(response)) {
+      useAuthStore.getState().logout()
+      throw new Error('Сессия истекла: войдите заново, чтобы сохранить цеха на сервер')
+    }
     if (!response.ok) {
       throw new Error(`Не удалось сохранить цеха: ${response.status}`)
     }
@@ -272,29 +295,39 @@ export const useVsmStore = create(persist((set, get) => ({
     formData.append('file', file)
     const response = await fetch(`${API_URL}/api/upload/panorama`, {
       method: 'POST',
+      headers: authHeaders(),
       body: formData,
     })
     if (!response.ok) {
       throw new Error(`Не удалось загрузить панораму: ${response.status}`)
     }
     const data = await response.json()
-    if (!data?.url) return
+    if (!data?.url) return null
+    const url = resolveBackendUrl(data.url)
     set((state) =>
       updateActiveWorkshop(state, (workshop) => ({
         ...workshop,
         // Сразу абсолютный URL: Pannellum не должен резолвить его от Vite-origin (:5173).
-        panorama_url: resolveBackendUrl(data.url),
+        panorama_url: url,
       })),
     )
     await get().saveFlowToServer()
+    // Возвращаем URL, чтобы вызывающий код (TourPage) обновил панораму
+    // в enterprise-сторе, откуда её читает 360°-тур.
+    return url
   },
 
   loadFlowFromServer: async () => {
-    const token = useAuthStore.getState().token
-    if (!token) return
+    // Не авторизованы — молча остаёмся на локальных данных (без 401 в консоли).
+    if (!authToken()) return
     const response = await fetch(`${API_URL}/api/workshops`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: authHeaders(),
     })
+    // 401/403 — токен просрочен: сбрасываем сессию, локальные цеха не трогаем.
+    if (isUnauthorized(response)) {
+      useAuthStore.getState().logout()
+      return
+    }
     // 404 означает «данных ещё нет» — это нормальная ситуация, ничего не делаем.
     if (response.status === 404) return
     if (!response.ok) {

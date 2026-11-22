@@ -158,6 +158,7 @@ class ProcessNodeCreate(BaseModel):
     name: str
     kind: str = "operation"  # operation / warehouse / client / control
     cycle_time_sec: float = 0.0
+    cost: float = 0.0
     operators_count: int = 1
     batch_size: int = 1
     pos_x_m: float = 0.0
@@ -177,6 +178,7 @@ class ProcessNodeOut(BaseModel):
     name: str
     kind: str
     cycle_time_sec: float
+    cost: float = 0.0
     operators_count: int
     batch_size: int
     pos_x_m: float

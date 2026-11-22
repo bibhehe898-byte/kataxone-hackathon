@@ -119,6 +119,35 @@ export default function Hall3D({ workshop, takt, showHeat, showSpaghetti, select
   // Контур пола создаётся один раз и освобождается при размонтировании (иначе утечка на каждый рендер).
   const floorEdges = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(W, 0.02, L)), [W, L])
   useEffect(() => () => floorEdges.dispose(), [floorEdges])
+
+  // WebGL-рендерер держим в ref, чтобы освободить контекст при размонтировании.
+  // Иначе React (удаляя <Canvas>) и Three.js (освобождая сцену) одновременно
+  // трогают одни и те же DOM-узлы -> "Failed to execute 'removeChild' on 'Node'".
+  const rendererRef = useRef(null)
+  useEffect(
+    () => () => {
+      const renderer = rendererRef.current
+      rendererRef.current = null
+      if (!renderer) return
+
+      const canvas = renderer.domElement
+      try {
+        renderer.dispose()
+        renderer.forceContextLoss?.()
+      } catch (error) {
+        console.error('Hall3D: не удалось освободить WebGL-контекст', error)
+      }
+      // canvas убираем только если он ещё в DOM и у него есть родитель; innerHTML не используем.
+      if (canvas?.parentNode) {
+        try {
+          canvas.parentNode.removeChild(canvas)
+        } catch {
+          // Canvas уже удалён React/R3F — это нормально.
+        }
+      }
+    },
+    [],
+  )
   const nodes = workshop.nodes ?? []
   const wh = nodes.find((n) => n.kind === 'warehouse')
   const cl = nodes.find((n) => n.kind === 'client')
@@ -128,7 +157,14 @@ export default function Hall3D({ workshop, takt, showHeat, showSpaghetti, select
     : nodes.map((n) => ({ ...n, load_percent: 60, is_bottleneck: false }))
 
   return (
-    <Canvas shadows camera={{ position: [W * 2.2, 14, L * 0.5], fov: 50 }} onPointerMissed={() => onSelect(null)}>
+    <Canvas
+      shadows
+      camera={{ position: [W * 2.2, 14, L * 0.5], fov: 50 }}
+      onCreated={({ gl }) => {
+        rendererRef.current = gl
+      }}
+      onPointerMissed={() => onSelect(null)}
+    >
       <color attach="background" args={['#0b1220']} />
       <ambientLight intensity={0.6} />
       <directionalLight position={[8, 14, 6]} intensity={1.1} castShadow />

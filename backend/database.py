@@ -21,7 +21,7 @@ UPLOADS_DIR = PUBLIC_DIR / "uploads"
 # Версия схемы данных. При несовпадении со значением в БД пересоздаём
 # «проектные» таблицы (enterprises/workshops3d/process_nodes/...). Это безопасно:
 # пилотный кейс и любые тестовые данные восстанавливаются Auto-Seed на старте.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # check_same_thread=False обязателен для SQLite в связке с FastAPI (thread pool).
 engine = create_engine(

@@ -294,6 +294,20 @@ export const useEnterpriseStore = create(
         return url
       },
 
+      // Обновляет URL панорамы активного цеха сразу (без повторной загрузки файла).
+      // Используется после успешной загрузки в useVsmStore.uploadPanorama, чтобы тур
+      // (читающий enterprise-стор) сразу показал новую панораму.
+      applyPanorama: (workshopId, url) => {
+        const ent = get().getActiveEnterprise() ?? get().enterprises[0]
+        if (!ent || !url) return
+        set((s) =>
+          replaceEnterprise(s, {
+            ...ent,
+            workshops: ent.workshops.map((w) => (w.id === workshopId ? { ...w, panorama_url: url } : w)),
+          }),
+        )
+      },
+
       addPoi: async (workshopId, poi) => {
         const ent = get().getActiveEnterprise()
         if (!ent) return null

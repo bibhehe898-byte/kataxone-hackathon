@@ -47,8 +47,10 @@ export default function TourPage() {
   const fileRef = useRef(null)
 
   useEffect(() => {
-    if (!enterprises.length) loadEnterprises()
-  }, [enterprises.length, loadEnterprises])
+    // Всегда запрашиваем свежие данные при открытии тура: редактор мог изменить
+    // этапы и сохранить их на сервер, а кеш в памяти уже устарел.
+    loadEnterprises()
+  }, [loadEnterprises])
 
   const enterprise = enterprises.find((e) => e.id === activeEnterpriseId) ?? enterprises[0] ?? null
   const rounds = useMemo(() => findRounds(enterprise), [enterprise])
@@ -139,8 +141,10 @@ export default function TourPage() {
     try {
       const vsm = useVsmStore.getState()
       vsm.setActiveWorkshop(`ws-${workshop.id}`)
-      await vsm.uploadPanorama(file)
-      await loadEnterprises()
+      const url = await vsm.uploadPanorama(file)
+      // Обновляем панораму активного цеха сразу в enterprise-сторе (его читает тур),
+      // не дожидаясь перезагрузки списка предприятий.
+      if (url) useEnterpriseStore.getState().applyPanorama(workshop.id, url)
     } catch {
       await setPanorama(workshop.id, file)
     }

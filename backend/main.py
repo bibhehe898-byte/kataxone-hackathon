@@ -215,6 +215,138 @@ def get_legacy_workshops(
     return json.loads(flow.workshop_data)
 
 
+def _as_float(value, default=0.0):
+    """Безопасное приведение к float (значения из JSON могут приходить строками)."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _legacy_db_id(node_id, prefix):
+    """Возвращает int id, если id редактора имеет вид '<prefix><int>' (например n-3, ws-1)."""
+    if not isinstance(node_id, str) or not node_id.startswith(prefix):
+        return None
+    raw = node_id[len(prefix):]
+    return int(raw) if raw.isdigit() else None
+
+
+def _sync_legacy_to_process(db: Session, workshops) -> None:
+    """Переносит правки из legacy-графа Редактора в process_nodes/process_edges.
+
+    - этапы с id `n-<id>` (пришедшие из process_nodes) — обновляются;
+    - этапы с id `step-<uuid>` (новые в редакторе) — создаются в БД;
+    - связи — создаются, если отсутствуют, иначе обновляется время транспортировки;
+    - удалённые в редакторе этапы — удаляются из БД (кроме склада/клиента).
+    """
+    for ws in workshops or []:
+        ws_id = _legacy_db_id(ws.get("id"), prefix="ws-")
+        if ws_id is None:
+            continue
+        workshop = db.query(models.Workshop).filter(models.Workshop.id == ws_id).first()
+        if not workshop:
+            continue
+
+        existing_nodes = (
+            db.query(models.ProcessNode)
+            .filter(models.ProcessNode.workshop_id == workshop.id)
+            .all()
+        )
+        max_step = max(
+            (n.step_number for n in existing_nodes if n.kind in ("operation", "control")),
+            default=0,
+        )
+        baseline_flag = existing_nodes[0].is_baseline if existing_nodes else True
+
+        # id редактора -> id в process_nodes
+        editor_to_db = {}
+        for node in ws.get("nodes") or []:
+            node_id = node.get("id")
+            data = node.get("data") or {}
+            db_id = _legacy_db_id(node_id, prefix="n-")
+
+            if db_id is not None:
+                pn = db.query(models.ProcessNode).filter(
+                    models.ProcessNode.id == db_id,
+                    models.ProcessNode.workshop_id == workshop.id,
+                ).first()
+                if not pn:
+                    continue
+                label = data.get("label")
+                if isinstance(label, str) and label.strip():
+                    pn.name = label.strip()
+                if data.get("cycleTime") is not None:
+                    pn.cycle_time_sec = _as_float(data.get("cycleTime"))
+                if data.get("cost") is not None:
+                    pn.cost_value = _as_float(data.get("cost"))
+                editor_to_db[node_id] = pn.id
+                continue
+
+            # Новый этап из редактора (id вида step-<uuid>): создаём process_node.
+            if isinstance(node_id, str) and node_id.startswith("step-"):
+                position = node.get("position") or {}
+                raw_name = data.get("label")
+                name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else "Новый этап"
+                max_step += 1
+                new_node = models.ProcessNode(
+                    workshop_id=workshop.id,
+                    step_number=max_step,
+                    name=name,
+                    kind=data.get("kind") or "operation",
+                    cycle_time_sec=_as_float(data.get("cycleTime")),
+                    cost_value=_as_float(data.get("cost")),
+                    pos_x_m=_as_float(position.get("x")),
+                    pos_y_m=_as_float(position.get("y")),
+                    is_baseline=baseline_flag,
+                )
+                db.add(new_node)
+                db.flush()
+                editor_to_db[node_id] = new_node.id
+
+        # Связи: создаём отсутствующие, обновляем время транспортировки у существующих.
+        for edge in ws.get("edges") or []:
+            src = editor_to_db.get(edge.get("source"))
+            dst = editor_to_db.get(edge.get("target"))
+            if src is None or dst is None:
+                continue
+            has_transport = edge.get("transport_time_sec", edge.get("transportTime")) is not None
+            transport = _as_float(edge.get("transport_time_sec", edge.get("transportTime")))
+            pe = db.query(models.ProcessEdge).filter(
+                models.ProcessEdge.workshop_id == workshop.id,
+                models.ProcessEdge.source_node_id == src,
+                models.ProcessEdge.target_node_id == dst,
+            ).first()
+            if pe:
+                if has_transport:
+                    pe.transport_time_sec = transport
+                continue
+            db.add(
+                models.ProcessEdge(
+                    workshop_id=workshop.id,
+                    source_node_id=src,
+                    target_node_id=dst,
+                    transport_time_sec=transport,
+                    batch_size=edge.get("batch_size", 2),
+                    is_baseline=baseline_flag,
+                )
+            )
+
+        # Удаляем этапы (operation/control), которые пользователь удалил в редакторе:
+        # их нет в пришедшем JSON. Склад/клиент не трогаем — редактор их не присылает.
+        present_ids = set(editor_to_db.values())
+        if present_ids:
+            for old_node in existing_nodes:
+                if old_node.kind not in ("operation", "control"):
+                    continue
+                if old_node.id in present_ids:
+                    continue
+                db.query(models.ProcessEdge).filter(
+                    (models.ProcessEdge.source_node_id == old_node.id)
+                    | (models.ProcessEdge.target_node_id == old_node.id)
+                ).delete(synchronize_session=False)
+                db.delete(old_node)
+
+
 @app.post("/api/workshops")
 def save_legacy_workshops(
     flow_data: schemas.FlowSave,
@@ -229,6 +361,11 @@ def save_legacy_workshops(
     else:
         flow = models.Flow(user_id=current_user.id, workshop_data=workshop_data)
         db.add(flow)
+
+    # Синхронизируем изменения этапов/связей в актуальные таблицы process_nodes/process_edges,
+    # а не просто возвращаем 200 OK: иначе время цикла и прочие характеристики
+    # не попадали бы в Дашборд и 3D-тур.
+    _sync_legacy_to_process(db, flow_data.workshops)
 
     db.commit()
     db.refresh(flow)
@@ -388,6 +525,7 @@ def create_workshop_node(
         name=data.name,
         kind=data.kind,
         cycle_time_sec=data.cycle_time_sec,
+        cost_value=data.cost,
         operators_count=data.operators_count,
         batch_size=data.batch_size,
         pos_x_m=data.pos_x_m,

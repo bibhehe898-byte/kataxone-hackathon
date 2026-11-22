@@ -168,6 +168,8 @@ export default function EditorPage() {
   const loadFlowFromServer = useVsmStore((state) => state.loadFlowFromServer)
 
   const [editing, setEditing] = useState(null)
+  const [workshopModal, setWorkshopModal] = useState(false)
+  const [workshopName, setWorkshopName] = useState('')
 
   const activeWorkshop =
     workshops.find((workshop) => workshop.id === activeWorkshopId) ?? workshops[0] ?? null
@@ -180,10 +182,18 @@ export default function EditorPage() {
     setActiveWorkshop(id)
   }
 
-  const handleAddWorkshop = () => {
-    const name = window.prompt('Название нового цеха:')
-    if (name === null) return
+  const openAddWorkshop = () => {
+    setWorkshopName('')
+    setWorkshopModal(true)
+  }
+
+  const submitWorkshop = (event) => {
+    event.preventDefault()
+    const name = workshopName.trim()
+    if (!name) return
     addWorkshop(name)
+    setWorkshopModal(false)
+    setWorkshopName('')
   }
 
   const handleSaveToServer = async () => {
@@ -279,7 +289,7 @@ export default function EditorPage() {
                 </button>
               ))}
             </div>
-            <button type="button" className="btn" onClick={handleAddWorkshop}>
+            <button type="button" className="btn" onClick={openAddWorkshop}>
               <Plus size={16} aria-hidden="true" />
               Добавить цех
             </button>
@@ -338,6 +348,60 @@ export default function EditorPage() {
           onConnect={onConnect}
           onNodeClick={handleNodeClick}
         />
+
+        {workshopModal && (
+          <div style={overlayStyle} onClick={() => setWorkshopModal(false)}>
+            <form style={cardStyle} onClick={(event) => event.stopPropagation()} onSubmit={submitWorkshop}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 16,
+                }}
+              >
+                <h2 style={{ fontSize: 17, fontWeight: 650 }}>Новый цех</h2>
+                <button
+                  type="button"
+                  onClick={() => setWorkshopModal(false)}
+                  aria-label="Закрыть"
+                  style={{
+                    display: 'inline-flex',
+                    padding: 4,
+                    border: 0,
+                    borderRadius: 8,
+                    background: 'transparent',
+                    color: 'var(--muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <X size={18} aria-hidden="true" />
+                </button>
+              </div>
+
+              <label style={fieldStyle}>
+                <span style={labelStyle}>Название цеха</span>
+                <input
+                  type="text"
+                  autoFocus
+                  value={workshopName}
+                  onChange={(event) => setWorkshopName(event.target.value)}
+                  placeholder="Например: Цех 3"
+                  style={inputStyle}
+                />
+              </label>
+
+              <button
+                type="submit"
+                className="btn btn--primary"
+                style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+              >
+                <Plus size={15} aria-hidden="true" />
+                Создать цех
+              </button>
+            </form>
+          </div>
+        )}
 
         {editing && (
           <div style={overlayStyle} onClick={() => setEditing(null)}>

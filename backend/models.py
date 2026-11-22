@@ -130,6 +130,7 @@ class ProcessNode(Base):
     name = Column(String, nullable=False)
     kind = Column(String, default="operation", nullable=False)  # operation / warehouse / client / control
     cycle_time_sec = Column(Float, default=0.0, nullable=False)
+    cost_value = Column(Float, default=0.0, nullable=False)
     operators_count = Column(Integer, default=1, nullable=False)
     batch_size = Column(Integer, default=1, nullable=False)
 
