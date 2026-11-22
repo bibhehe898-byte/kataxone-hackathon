@@ -7,6 +7,19 @@ import { buildRoutes, heatInfo } from '../../utils/metrics'
 // Координаты зала (x, y) → Three (x, z). Ось Y — вверх.
 const to3 = (p, h = 0.05) => new THREE.Vector3(p[0], h, p[1])
 
+// three.js r163+ использует только WebGL2: на старых браузерах/ВМ/удалённых
+// рабочих столах без WebGL2 <Canvas> бросает ошибку и ломает страницу.
+// Проверяем поддержку заранее и показываем понятное сообщение вместо краша.
+const hasWebGL2 = (() => {
+  if (typeof document === 'undefined') return true
+  try {
+    const canvas = document.createElement('canvas')
+    return !!(window.WebGL2RenderingContext && canvas.getContext('webgl2'))
+  } catch {
+    return false
+  }
+})()
+
 function Table({ node, workshop, takt, selected, onSelect }) {
   const mesh = useRef()
   const load = node.load_percent ?? (takt ? (node.cycle_time_sec / takt) * 100 : 0)
@@ -155,6 +168,14 @@ export default function Hall3D({ workshop, takt, showHeat, showSpaghetti, select
   const view = showHeat
     ? nodes
     : nodes.map((n) => ({ ...n, load_percent: 60, is_bottleneck: false }))
+
+  if (!hasWebGL2) {
+    return (
+      <div className="tour3d-empty">
+        3D-двойник недоступен: ваш браузер не поддерживает WebGL2 (включите аппаратное ускорение или обновите браузер).
+      </div>
+    )
+  }
 
   return (
     <Canvas
