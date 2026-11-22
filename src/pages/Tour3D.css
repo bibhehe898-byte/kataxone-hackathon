@@ -1,0 +1,59 @@
+.tour3d-page { position: relative; }
+.tour3d-stage, .tour3d-pano { position: absolute; inset: 0; }
+.tour3d-pano .tour-viewer { width: 100%; height: 100%; }
+.tour3d-pano.is-constructor { cursor: crosshair; }
+.tour3d-empty { padding: 40px; color: #94a3b8; }
+
+.tour3d-toolbar {
+  position: absolute; top: 16px; left: 16px; right: 16px; z-index: 5;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: none;
+}
+.tour3d-toolbar > * { pointer-events: auto; }
+.tour3d-toolbar .btn { display: inline-flex; gap: 6px; align-items: center; }
+
+.tour3d-metrics, .tour3d-legend, .tour3d-poilist, .tour3d-poiform, .xray-drawer {
+  position: absolute; z-index: 5; background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 12px;
+  color: #e2e8f0; padding: 12px 14px; backdrop-filter: blur(8px); font-size: 13px;
+}
+.tour3d-metrics { left: 16px; bottom: 16px; min-width: 260px; }
+.tour3d-metrics h3, .tour3d-poilist h3, .tour3d-poiform h3 { margin: 0 0 8px; font-size: 14px; display: flex; gap: 6px; align-items: center; }
+.tour3d-metrics table { width: 100%; border-collapse: collapse; }
+.tour3d-metrics td, .tour3d-metrics th { padding: 3px 6px; text-align: right; }
+.tour3d-metrics td:first-child { text-align: left; color: #94a3b8; }
+.tour3d-legend { left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 14px; }
+.tour3d-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; }
+
+.xray-drawer { top: 70px; right: 16px; bottom: 16px; width: 330px; overflow-y: auto; }
+.xray-drawer h2 { margin: 4px 0 10px; font-size: 16px; }
+.xray-close { position: absolute; top: 8px; right: 8px; background: none; border: 0; color: #94a3b8; cursor: pointer; }
+.xray-kpi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.xray-kpi small { display: block; color: #94a3b8; }
+.xray-kpi b { font-size: 18px; }
+.xray-bar { height: 6px; background: #334155; border-radius: 4px; margin: 10px 0; overflow: hidden; }
+.xray-bar i { display: block; height: 100%; }
+.xray-warn { color: #f87171; font-weight: 600; margin: 4px 0; }
+.xray-block h4 { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; color: #94a3b8; }
+.xray-block ul { margin: 0; padding-left: 18px; }
+.xray-drawer .btn { margin-top: 14px; width: 100%; }
+
+.t3d-label {
+  display: flex; flex-direction: column; align-items: center; white-space: nowrap;
+  background: rgba(15, 23, 42, 0.85); color: #fff; padding: 3px 7px; border-radius: 6px;
+  font-size: 11px; line-height: 1.25;
+}
+.t3d-label.is-bottleneck { background: #b91c1c; }
+.t3d-label em { font-style: normal; font-weight: 700; color: #fecaca; }
+
+.tour3d-poilist { top: 70px; left: 16px; width: 280px; max-height: 50vh; overflow-y: auto; }
+.tour3d-poilist ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.tour3d-poilist li { cursor: pointer; padding: 6px 8px; border-radius: 8px; background: rgba(51, 65, 85, 0.5); display: grid; }
+.tour3d-poilist small { color: #94a3b8; }
+.tour3d-hint { color: #38bdf8; margin: 0 0 8px; }
+.tour3d-poiform { top: 70px; right: 16px; width: 320px; display: grid; gap: 6px; max-height: calc(100% - 90px); overflow-y: auto; }
+.tour3d-poiform__actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+.tour-select {
+  background: rgba(15, 23, 42, 0.8); color: inherit; border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px; padding: 6px 10px;
+}

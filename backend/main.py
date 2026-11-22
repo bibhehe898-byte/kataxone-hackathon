@@ -1,19 +1,57 @@
 import json
 import time
+import uuid
+from pathlib import Path
+from typing import List
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
-from . import models, schemas
-from .database import engine, get_db
+from . import models, schemas, seed, services
+from .database import (
+    SCHEMA_VERSION,
+    SessionLocal,
+    UPLOADS_DIR,
+    engine,
+    get_db,
+    get_stored_schema_version,
+    set_stored_schema_version,
+)
 
+# ---------------------------------------------------------------------------
+# Инициализация схемы БД + миграции
+# ---------------------------------------------------------------------------
 models.Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Kataxone Backend")
+# Legacy-миграция: старая таблица flows имела колонки view_name/nodes_json/edges_json.
+inspector = inspect(engine)
+if inspector.has_table("flows"):
+    columns = {column["name"] for column in inspector.get_columns("flows")}
+    if "workshop_data" not in columns:
+        models.Flow.__table__.drop(engine, checkfirst=True)
+        models.Flow.__table__.create(engine)
+
+# Версионная миграция «проектных» таблиц. При рассинхроне версий схемы
+# пересоздаём таблицы предприятий/цехов/узлов — данные восстанавливаются Auto-Seed.
+if get_stored_schema_version() != SCHEMA_VERSION:
+    models.ProcessEdge.__table__.drop(engine, checkfirst=True)
+    models.POIMarker.__table__.drop(engine, checkfirst=True)
+    models.ProcessNode.__table__.drop(engine, checkfirst=True)
+    models.Workshop.__table__.drop(engine, checkfirst=True)
+    models.Enterprise.__table__.drop(engine, checkfirst=True)
+    models.Base.metadata.create_all(bind=engine)
+    set_stored_schema_version(SCHEMA_VERSION)
+
+# Папка для пользовательских загрузок (панорамы, планы, фото рабочих мест).
+UPLOADS_DIR = Path(UPLOADS_DIR)
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(title="Kataxone Enterprise Backend", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,7 +61,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Настройки безопасности ---
+
+@app.on_event("startup")
+def on_startup() -> None:
+    """Auto-Seed пилотного кейса «Фабрика процессов (РЦК Башкортостан) — VENIO-C»."""
+    db = SessionLocal()
+    try:
+        seed.seed_pilot(db)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Настройки безопасности (legacy — оставлены для совместимости с UI редактора)
+# ---------------------------------------------------------------------------
 SECRET_KEY = "CHANGE_ME_IN_PRODUCTION_USE_ENV"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 часа
@@ -71,6 +122,27 @@ def get_current_user(
     return user
 
 
+# ---------------------------------------------------------------------------
+# Служебные эндпоинты
+# ---------------------------------------------------------------------------
+
+
+@app.get("/")
+def root():
+    return {"service": "Kataxone Enterprise Backend", "version": "2.0.0", "status": "ok"}
+
+
+@app.get("/api/health")
+def health(db: Session = Depends(get_db)):
+    enterprises = db.query(models.Enterprise).count()
+    return {"status": "ok", "enterprises": enterprises, "schema_version": SCHEMA_VERSION}
+
+
+# ---------------------------------------------------------------------------
+# Авторизация (legacy)
+# ---------------------------------------------------------------------------
+
+
 @app.post("/api/register", status_code=status.HTTP_201_CREATED)
 def register(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
     existing = db.query(models.User).filter(models.User.username == user_data.username).first()
@@ -102,56 +174,303 @@ def login(user_data: schemas.UserLogin, db: Session = Depends(get_db)):
     return {"access_token": token, "token_type": "bearer", "username": user.username}
 
 
-@app.get("/api/flows/{view_name}")
-def get_flow(
-    view_name: str,
+# ---------------------------------------------------------------------------
+# Legacy-сохранение графов КПСЦ (Редактор)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/workshops")
+def get_legacy_workshops(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    flow = (
-        db.query(models.Flow)
-        .filter(models.Flow.user_id == current_user.id, models.Flow.view_name == view_name)
-        .first()
-    )
+    flow = db.query(models.Flow).filter(models.Flow.user_id == current_user.id).first()
     if not flow:
-        raise HTTPException(status_code=404, detail="Граф не найден")
+        raise HTTPException(status_code=404, detail="Цеха не найдены")
 
-    return {
-        "view_name": flow.view_name,
-        "nodes": json.loads(flow.nodes_json),
-        "edges": json.loads(flow.edges_json),
-    }
+    return json.loads(flow.workshop_data)
 
 
-@app.post("/api/flows/{view_name}")
-def save_flow(
-    view_name: str,
+@app.post("/api/workshops")
+def save_legacy_workshops(
     flow_data: schemas.FlowSave,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    flow = (
-        db.query(models.Flow)
-        .filter(models.Flow.user_id == current_user.id, models.Flow.view_name == view_name)
-        .first()
-    )
-
-    nodes_json = json.dumps(flow_data.nodes, ensure_ascii=False)
-    edges_json = json.dumps(flow_data.edges, ensure_ascii=False)
+    flow = db.query(models.Flow).filter(models.Flow.user_id == current_user.id).first()
+    workshop_data = json.dumps(flow_data.workshops, ensure_ascii=False)
 
     if flow:
-        flow.nodes_json = nodes_json
-        flow.edges_json = edges_json
+        flow.workshop_data = workshop_data
     else:
-        flow = models.Flow(
-            user_id=current_user.id,
-            view_name=view_name,
-            nodes_json=nodes_json,
-            edges_json=edges_json,
-        )
+        flow = models.Flow(user_id=current_user.id, workshop_data=workshop_data)
         db.add(flow)
 
     db.commit()
     db.refresh(flow)
+    return {"saved": True}
 
-    return {"view_name": flow.view_name, "saved": True}
+
+# ---------------------------------------------------------------------------
+# Предприятия / проекты
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/enterprises")
+def list_enterprises(db: Session = Depends(get_db)):
+    enterprises = db.query(models.Enterprise).order_by(models.Enterprise.id).all()
+    return [services.enterprise_to_dict(e, include_children=False) for e in enterprises]
+
+
+@app.post("/api/enterprises", status_code=status.HTTP_201_CREATED)
+def create_enterprise(data: schemas.EnterpriseCreate, db: Session = Depends(get_db)):
+    enterprise = models.Enterprise(
+        name=data.name,
+        industry=data.industry,
+        product_name=data.product_name,
+        shift_duration_sec=data.shift_duration_sec,
+        target_output=data.target_output,
+        unit_price=data.unit_price,
+        cost_fot=data.cost_fot,
+        cost_equipment=data.cost_equipment,
+        cost_overhead=data.cost_overhead,
+        cost_materials=data.cost_materials,
+        defect_in_flow_cost=data.defect_in_flow_cost,
+        wip_start_cost=data.wip_start_cost,
+        wip_end_cost=data.wip_end_cost,
+        created_at_ms=int(time.time() * 1000),
+    )
+    enterprise.takt_time_sec = (
+        data.shift_duration_sec / data.target_output if data.target_output else 0.0
+    )
+    db.add(enterprise)
+    db.commit()
+    db.refresh(enterprise)
+    return services.enterprise_to_dict(enterprise, include_children=False)
+
+
+@app.get("/api/enterprises/{enterprise_id}")
+def get_enterprise(enterprise_id: int, db: Session = Depends(get_db)):
+    enterprise = db.query(models.Enterprise).filter(models.Enterprise.id == enterprise_id).first()
+    if not enterprise:
+        raise HTTPException(status_code=404, detail="Предприятие не найдено")
+    return services.enterprise_to_dict(enterprise, include_children=True)
+
+
+@app.put("/api/enterprises/{enterprise_id}")
+def update_enterprise(
+    enterprise_id: int, data: schemas.EnterpriseUpdate, db: Session = Depends(get_db)
+):
+    enterprise = db.query(models.Enterprise).filter(models.Enterprise.id == enterprise_id).first()
+    if not enterprise:
+        raise HTTPException(status_code=404, detail="Предприятие не найдено")
+
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(enterprise, field, value)
+
+    if enterprise.target_output:
+        enterprise.takt_time_sec = enterprise.shift_duration_sec / enterprise.target_output
+
+    db.commit()
+    db.refresh(enterprise)
+    return services.enterprise_to_dict(enterprise, include_children=False)
+
+
+@app.delete("/api/enterprises/{enterprise_id}")
+def delete_enterprise(enterprise_id: int, db: Session = Depends(get_db)):
+    enterprise = db.query(models.Enterprise).filter(models.Enterprise.id == enterprise_id).first()
+    if not enterprise:
+        raise HTTPException(status_code=404, detail="Предприятие не найдено")
+    db.delete(enterprise)
+    db.commit()
+    return {"deleted": True, "id": enterprise_id}
+
+
+@app.get("/api/enterprises/{enterprise_id}/export")
+def export_enterprise(enterprise_id: int, db: Session = Depends(get_db)):
+    enterprise = db.query(models.Enterprise).filter(models.Enterprise.id == enterprise_id).first()
+    if not enterprise:
+        raise HTTPException(status_code=404, detail="Предприятие не найдено")
+    payload = services.export_enterprise(enterprise)
+    payload["exported_at_ms"] = int(time.time() * 1000)
+    return payload
+
+
+@app.post("/api/enterprises/import", status_code=status.HTTP_201_CREATED)
+def import_enterprise(payload: dict, db: Session = Depends(get_db)):
+    enterprise = services.import_enterprise(db, payload)
+    return services.enterprise_to_dict(enterprise, include_children=False)
+
+
+@app.get("/api/enterprises/{enterprise_id}/infocenter")
+def enterprise_infocenter(enterprise_id: int, db: Session = Depends(get_db)):
+    enterprise = db.query(models.Enterprise).filter(models.Enterprise.id == enterprise_id).first()
+    if not enterprise:
+        raise HTTPException(status_code=404, detail="Предприятие не найдено")
+    return services.build_infocenter(db, enterprise)
+
+
+@app.get("/api/enterprises/{enterprise_id}/dashboard")
+def enterprise_dashboard(enterprise_id: int, db: Session = Depends(get_db)):
+    enterprise = db.query(models.Enterprise).filter(models.Enterprise.id == enterprise_id).first()
+    if not enterprise:
+        raise HTTPException(status_code=404, detail="Предприятие не найдено")
+    return services.build_dashboard(db, enterprise)
+
+
+@app.post("/api/enterprises/{enterprise_id}/autobalance")
+def enterprise_autobalance(enterprise_id: int, db: Session = Depends(get_db)):
+    enterprise = db.query(models.Enterprise).filter(models.Enterprise.id == enterprise_id).first()
+    if not enterprise:
+        raise HTTPException(status_code=404, detail="Предприятие не найдено")
+    return services.auto_balance_preview(enterprise)
+
+
+# ---------------------------------------------------------------------------
+# Цеха, рабочие места, связи, POI
+# ---------------------------------------------------------------------------
+
+
+def _get_workshop_or_404(db: Session, workshop_id: int) -> models.Workshop:
+    workshop = db.query(models.Workshop).filter(models.Workshop.id == workshop_id).first()
+    if not workshop:
+        raise HTTPException(status_code=404, detail="Цех не найден")
+    return workshop
+
+
+@app.get("/api/workshops/{workshop_id}")
+def get_workshop(workshop_id: int, db: Session = Depends(get_db)):
+    workshop = _get_workshop_or_404(db, workshop_id)
+    return services.workshop_to_dict(workshop, include_children=True)
+
+
+@app.get("/api/workshops/{workshop_id}/nodes")
+def get_workshop_nodes(workshop_id: int, db: Session = Depends(get_db)):
+    workshop = _get_workshop_or_404(db, workshop_id)
+    takt = workshop.enterprise.takt_time_sec
+    nodes = list(workshop.nodes)
+    bottleneck_id = services.find_bottleneck_id(nodes)
+    return [services.node_to_dict(n, takt, bottleneck_id) for n in nodes]
+
+
+@app.post("/api/workshops/{workshop_id}/nodes", status_code=status.HTTP_201_CREATED)
+def create_workshop_node(
+    workshop_id: int, data: schemas.ProcessNodeCreate, db: Session = Depends(get_db)
+):
+    workshop = _get_workshop_or_404(db, workshop_id)
+    node = models.ProcessNode(
+        workshop_id=workshop.id,
+        step_number=data.step_number,
+        name=data.name,
+        kind=data.kind,
+        cycle_time_sec=data.cycle_time_sec,
+        operators_count=data.operators_count,
+        batch_size=data.batch_size,
+        pos_x_m=data.pos_x_m,
+        pos_y_m=data.pos_y_m,
+        tools_required_json=services._dumps(data.tools_required),
+        excess_items_5s_json=services._dumps(data.excess_items_5s),
+        components_json=services._dumps(data.components),
+        standard_steps_json=services._dumps(data.standard_steps),
+        photo_url=data.photo_url,
+        is_baseline=data.is_baseline,
+    )
+    db.add(node)
+    db.commit()
+    db.refresh(node)
+    return services.node_to_dict(node, workshop.enterprise.takt_time_sec, None)
+
+
+@app.get("/api/workshops/{workshop_id}/edges")
+def get_workshop_edges(workshop_id: int, db: Session = Depends(get_db)):
+    _get_workshop_or_404(db, workshop_id)
+    edges = (
+        db.query(models.ProcessEdge)
+        .filter(models.ProcessEdge.workshop_id == workshop_id)
+        .order_by(models.ProcessEdge.id)
+        .all()
+    )
+    return [services.edge_to_dict(e) for e in edges]
+
+
+@app.post("/api/workshops/{workshop_id}/edges", status_code=status.HTTP_201_CREATED)
+def create_workshop_edge(
+    workshop_id: int, data: schemas.ProcessEdgeCreate, db: Session = Depends(get_db)
+):
+    _get_workshop_or_404(db, workshop_id)
+    edge = models.ProcessEdge(
+        workshop_id=workshop_id,
+        source_node_id=data.source_node_id,
+        target_node_id=data.target_node_id,
+        transport_time_sec=data.transport_time_sec,
+        batch_size=data.batch_size,
+        distance_m=data.distance_m,
+        is_baseline=data.is_baseline,
+    )
+    db.add(edge)
+    db.commit()
+    db.refresh(edge)
+    return services.edge_to_dict(edge)
+
+
+@app.get("/api/workshops/{workshop_id}/pois")
+def get_workshop_pois(workshop_id: int, db: Session = Depends(get_db)):
+    _get_workshop_or_404(db, workshop_id)
+    pois = (
+        db.query(models.POIMarker)
+        .filter(models.POIMarker.workshop_id == workshop_id)
+        .order_by(models.POIMarker.id)
+        .all()
+    )
+    return [services.poi_to_dict(p) for p in pois]
+
+
+@app.post("/api/workshops/{workshop_id}/pois", status_code=status.HTTP_201_CREATED)
+def create_workshop_poi(
+    workshop_id: int, data: schemas.POICreate, db: Session = Depends(get_db)
+):
+    _get_workshop_or_404(db, workshop_id)
+    poi = models.POIMarker(
+        workshop_id=workshop_id,
+        node_id=data.node_id,
+        pitch=data.pitch,
+        yaw=data.yaw,
+        title=data.title,
+        case_problem=data.case_problem,
+        case_solution=data.case_solution,
+        metric_before=data.metric_before,
+        metric_after=data.metric_after,
+        media_url=data.media_url,
+        is_baseline=data.is_baseline,
+    )
+    db.add(poi)
+    db.commit()
+    db.refresh(poi)
+    return services.poi_to_dict(poi)
+
+
+# ---------------------------------------------------------------------------
+# Загрузка файлов (360°-панорамы, планы цеха, фото рабочих мест)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/upload", status_code=status.HTTP_201_CREATED)
+async def upload_file(file: UploadFile = File(...)):
+    suffix = Path(file.filename or "").suffix.lower()
+    allowed = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+    if suffix not in allowed:
+        raise HTTPException(status_code=400, detail=f"Недопустимый тип файла: {suffix or 'без расширения'}")
+
+    unique_name = f"{uuid.uuid4().hex}{suffix}"
+    target = UPLOADS_DIR / unique_name
+    content = await file.read()
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Файл слишком большой (лимит 25 МБ)")
+    target.write_bytes(content)
+
+    return {
+        "url": f"/uploads/{unique_name}",
+        "filename": unique_name,
+        "original_name": file.filename,
+        "size": len(content),
+    }

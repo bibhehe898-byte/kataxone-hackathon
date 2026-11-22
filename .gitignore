@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*
@@ -28,3 +31,8 @@ backend/kataxone.db
 __pycache__/
 *.pyc
 .venv/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3

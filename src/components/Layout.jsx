@@ -1,16 +1,29 @@
-import { Boxes, ChartColumn, Compass, LogOut, Workflow } from 'lucide-react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { Boxes, Building2, ChartColumn, Compass, LogOut, Workflow } from 'lucide-react'
+import { useEffect } from 'react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/useAuthStore'
+import { useEnterpriseStore } from '../store/useEnterpriseStore'
 import './Layout.css'
+import '../pages/Tour3D.css'
 
 const NAV_ITEMS = [
-  { to: '/', label: '3D-тур', icon: Compass, end: true },
+  { to: '/', label: 'Предприятия', icon: Building2, end: true },
+  { to: '/tour', label: '3D-тур', icon: Compass },
   { to: '/editor', label: 'Редактор КПСЦ', icon: Workflow },
   { to: '/dashboard', label: 'Дашборд До/После', icon: ChartColumn },
 ]
 
 export default function Layout() {
   const logout = useAuthStore((state) => state.logout)
+  const navigate = useNavigate()
+  const enterprises = useEnterpriseStore((s) => s.enterprises)
+  const activeId = useEnterpriseStore((s) => s.activeEnterpriseId)
+  const loadEnterprises = useEnterpriseStore((s) => s.loadEnterprises)
+  const selectEnterprise = useEnterpriseStore((s) => s.selectEnterprise)
+
+  useEffect(() => {
+    if (!useEnterpriseStore.getState().enterprises.length) loadEnterprises()
+  }, [loadEnterprises])
 
   return (
     <div className="app-shell">
@@ -39,6 +52,24 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+
+        {enterprises.length > 0 && (
+          <select
+            className="tour-select"
+            aria-label="Активное предприятие"
+            value={activeId ?? ''}
+            onChange={(e) => {
+              if (e.target.value === '__all') navigate('/')
+              else selectEnterprise(e.target.value)
+            }}
+            style={{ maxWidth: 220 }}
+          >
+            {enterprises.map((e) => (
+              <option key={e.id} value={e.id}>{e.name}</option>
+            ))}
+            <option value="__all">Все предприятия…</option>
+          </select>
+        )}
 
         <span className="header-status" title="Версия MVP">
           <span className="status-dot" aria-hidden="true" />

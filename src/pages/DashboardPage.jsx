@@ -1,353 +1,245 @@
-import { ArrowDownRight, ArrowUpRight, ChartColumn, Download, Info, MoveRight } from 'lucide-react'
+import { Scale, RotateCcw, Box } from 'lucide-react'
+import { useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { DASHBOARD_METRICS } from '../data/vsmData'
-import { useVsmStore } from '../store/useVsmStore'
+import { useEnterpriseStore } from '../store/useEnterpriseStore'
+import { bottleneckOf, findRounds, isOperational } from '../utils/metrics'
 import './DashboardPage.css'
 
-const numberFormatter = (decimals) =>
-  new Intl.NumberFormat('ru-RU', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  })
+const fmt = (v, d = 0) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d }).format(v)
+const rub = (v) => `${v < 0 ? '−' : ''}${fmt(Math.abs(v))} ₽`
+const kRub = (v) => `${fmt(Math.abs(v) / 1000, Math.abs(v) % 1000 ? 1 : 0)}к руб`
+const REAL_ACCEPTED_R1 = 2
 
-function buildRows(flows) {
-  return DASHBOARD_METRICS.map((metric) => {
-    const before = metric.value(flows.before)
-    const after = metric.value(flows.after)
-    const max = Math.max(before, after) || 1
-    const change = before === 0 ? 0 : ((after - before) / before) * 100
-    const improved = metric.direction === 'lower' ? after < before : after > before
-    const worsened = metric.direction === 'lower' ? after > before : after < before
-
-    return {
-      ...metric,
-      before,
-      after,
-      change,
-      improved,
-      worsened,
-      beforePct: (before / max) * 100,
-      afterPct: (after / max) * 100,
-    }
-  })
+function stationRows(workshop, takt) {
+  return (workshop?.nodes ?? [])
+    .filter(isOperational)
+    .sort((a, b) => a.step_number - b.step_number)
+    .map((n) => ({ id: n.id, step: n.step_number, sec: n.cycle_time_sec, load: takt ? (n.cycle_time_sec / takt) * 100 : 0 }))
 }
 
-const formatValue = (value, decimals) => numberFormatter(decimals).format(value)
-
-const formatChange = (change) => {
-  const rounded = Math.round(change)
-  if (rounded === 0) return '0%'
-  return `${rounded > 0 ? '+' : '−'}${Math.abs(rounded)}%`
-}
-
-const sumCycleTime = (flow) =>
-  flow.nodes.reduce((sum, item) => sum + (item.data.cycleTime ?? 0), 0)
-
-function buildImprovementPlan(flows) {
-  const beforeTime = sumCycleTime(flows.before)
-  const afterTime = sumCycleTime(flows.after)
-  const bottlenecks = flows.before.nodes.filter((node) => (node.data.load ?? 0) > 90)
-
-  const lines = [
-    'План улучшений КПСЦ',
-    '',
-    'Текущие метрики:',
-    `- Время цикла (До): ${beforeTime} мин`,
-    `- Время цикла (После): ${afterTime} мин`,
-    '',
-    'Задачи:',
-  ]
-
-  if (bottlenecks.length === 0) {
-    lines.push('- Узких мест (загрузка > 90%) не найдено.')
-  } else {
-    bottlenecks.forEach((node, index) => {
-      lines.push(
-        `${index + 1}. Оптимизировать узкое место: ${node.data.label} (загрузка ${node.data.load}%)`,
-      )
-    })
+function scenario(ent, workshop, balanced) {
+  const takt = ent.shift_duration_sec / (ent.target_output || 1)
+  const maxCycle = bottleneckOf(workshop)?.cycle_time_sec ?? 0
+  const capacity = maxCycle ? Math.floor(ent.shift_duration_sec / maxCycle) : 0
+  const accepted = balanced ? Math.min(ent.target_output, capacity) : Math.min(REAL_ACCEPTED_R1, capacity)
+  const totalCost = ent.cost_fot + ent.cost_equipment + ent.cost_overhead + ent.cost_materials
+  const revenue = accepted * ent.unit_price
+  const defect = balanced ? 0 : ent.defect_in_flow_cost
+  return {
+    takt, maxCycle, capacity, accepted, totalCost, revenue, defect,
+    unitCost: accepted ? totalCost / accepted : null,
+    profit: revenue - totalCost,
+    profitDefect: revenue - totalCost - defect,
+    fpy: balanced ? 100 : 33,
+    wipEnd: balanced ? ent.wip_start_cost : ent.wip_end_cost,
   }
-
-  return lines.join('\n')
-}
-
-function downloadImprovementPlan(flows) {
-  const content = buildImprovementPlan(flows)
-
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = 'plan_uluchsheniy.txt'
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
 }
 
 export default function DashboardPage() {
-  const flows = useVsmStore((state) => state.flows)
-  const view = useVsmStore((state) => state.view)
-  const updateNode = useVsmStore((state) => state.updateNode)
-  const rows = buildRows(flows)
+  const ent = useEnterpriseStore((s) => s.enterprises.find((e) => e.id === s.activeEnterpriseId) ?? null)
+  const balanced = useEnterpriseStore((s) => !!s.balanced[s.activeEnterpriseId])
+  // balanceLog выбираем по ссылке (стабильно), а нужный массив вычисляем во время рендера.
+  // Возврат `[...] ?? []` прямо из селектора даёт новую ссылку на каждый вызов
+  // и приводит к бесконечным ре-рендерам через useSyncExternalStore (React 18/19 + Zustand v5).
+  const balanceLog = useEnterpriseStore((s) => s.balanceLog)
+  const log = balanceLog[ent?.id] ?? []
+  const baseline = useEnterpriseStore((s) => s.originalBaseline[s.activeEnterpriseId])
+  const { loadEnterprises, autoBalance, resetBalance, updateEnterpriseParams, fetchAutobalancePreview } = useEnterpriseStore.getState()
 
-  const beforeCycleTime = sumCycleTime(flows.before)
-  const afterCycleTime = sumCycleTime(flows.after)
-  const savingsRub = Math.max(0, (beforeCycleTime - afterCycleTime) * 60 * 5000)
+  useEffect(() => {
+    if (!useEnterpriseStore.getState().enterprises.length) loadEnterprises()
+  }, [loadEnterprises])
 
-  const currentNodes = flows[view].nodes
-  const bottlenecks = currentNodes.filter((node) => (node.data.load ?? 0) > 90)
+  const { r1 } = findRounds(ent)
+  const before = useMemo(() => {
+    if (!ent || !r1) return null
+    return scenario(ent, balanced && baseline ? baseline : r1, false)
+  }, [ent, r1, balanced, baseline])
+  const after = useMemo(() => {
+    if (!ent || !r1) return null
+    return scenario(ent, r1, true)
+  }, [ent, r1])
 
-  const leadRow = rows.find((row) => row.key === 'leadTime')
-  const leadReduction =
-    leadRow && leadRow.before > 0 ? ((leadRow.before - leadRow.after) / leadRow.before) * 100 : 0
-  const heroValue = `${leadReduction >= 0 ? '−' : '+'}${Math.abs(Math.round(leadReduction))}%`
-  const heroCaption =
-    leadReduction >= 0 ? 'сокращение времени протекания' : 'рост времени протекания'
+  if (!ent || !r1 || !before) {
+    return <div className="page dashboard-page"><p className="ent-muted">Загрузка предприятия…</p></div>
+  }
+
+  const takt = before.takt
+  const baseRows = stationRows(balanced && baseline ? baseline : r1, takt)
+  const rows = stationRows(r1, takt)
+  const cur = balanced ? after : before
+  const maxSec = Math.max(takt * 1.6, ...baseRows.map((r) => r.sec), ...rows.map((r) => r.sec))
+  const pct = (sec) => `${(sec / maxSec) * 100}%`
+  const deltaOf = (id) => {
+    const b = baseRows.find((r) => r.id === id)?.sec ?? 0
+    const a = rows.find((r) => r.id === id)?.sec ?? 0
+    return a - b
+  }
+  const bn = baseRows.reduce((m, r) => (r.sec > m.sec ? r : m), baseRows[0])
+  const bnNow = rows.reduce((m, r) => (r.sec > m.sec ? r : m), rows[0])
+
+  const onBalance = () => {
+    autoBalance()
+    fetchAutobalancePreview()
+  }
+  const setParam = (key, v) => {
+    const n = Number(v)
+    if (n > 0) updateEnterpriseParams({ [key]: n })
+  }
 
   return (
     <div className="page dashboard-page">
-      <header className="page-header dash-header">
+      <header className="page-header">
         <div>
-          <span className="page-eyebrow">
-            <ChartColumn size={14} aria-hidden="true" />
-            Дашборд До/После
-          </span>
-          <h1 className="page-title">Эффект от изменений потока</h1>
+          <span className="page-eyebrow">Цифровой Инфоцентр РЦК</span>
+          <h1 className="page-title">{ent.name}</h1>
           <p className="page-subtitle">
-            Сравнение текущего и целевого состояния КПСЦ. Значения пересчитываются из
-            редактора — правки этапов сразу видны здесь.
+            Смена {fmt(ent.shift_duration_sec)} сек · План {ent.target_output} шт · Такт {fmt(takt)} сек ·{' '}
+            {balanced ? 'Раунд 2 — сбалансированный поток («После»)' : 'Раунд 1 — «Как есть» («До»)'}
           </p>
-
-          <div className="page-actions" style={{ marginTop: 18 }}>
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={() => downloadImprovementPlan(flows)}
-            >
-              <Download size={15} aria-hidden="true" />
-              Скачать план улучшений
-            </button>
-          </div>
-        </div>
-
-        <div className="hero-figure">
-          <span className="hero-number">{heroValue}</span>
-          <span className="hero-caption">{heroCaption}</span>
-          <span className="hero-detail">
-            {formatValue(leadRow?.before ?? 0, 0)} ч <MoveRight size={13} aria-hidden="true" />{' '}
-            {formatValue(leadRow?.after ?? 0, 0)} ч
-          </span>
         </div>
       </header>
 
-      <section className="viz-card" aria-labelledby="compare-title">
-        <div className="viz-card__head">
-          <div>
-            <h2 id="compare-title" className="viz-title">
-              Ключевые показатели
-            </h2>
-            <p className="viz-subtitle">
-              Каждая строка — своя шкала; значения подписаны напрямую.
-            </p>
-          </div>
-          <ul className="viz-legend" aria-label="Обозначения">
-            <li>
-              <span className="legend-swatch legend-swatch--before" aria-hidden="true" />
-              До
-            </li>
-            <li>
-              <span className="legend-swatch legend-swatch--after" aria-hidden="true" />
-              После
-            </li>
-          </ul>
-        </div>
-
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 16,
-            flexWrap: 'wrap',
-            marginTop: 16,
-            padding: '14px 18px',
-            borderRadius: 14,
-            border: '1px solid rgba(52, 211, 153, 0.3)',
-            background: 'rgba(52, 211, 153, 0.08)',
-          }}
-        >
-          <span style={{ fontSize: 13, color: 'var(--text-2)' }}>Экономия, руб/год</span>
-          <strong
-            style={{
-              fontSize: 'clamp(22px, 3vw, 30px)',
-              fontWeight: 650,
-              letterSpacing: '-0.02em',
-              color: 'var(--good)',
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {formatValue(savingsRub, 0)} ₽
-          </strong>
-        </div>
-
-        <ul className="dumbbell">
-          {rows.map((row) => {
-            const startPct = Math.min(row.beforePct, row.afterPct)
-            const widthPct = Math.abs(row.beforePct - row.afterPct)
-
-            return (
-              <li className="dumbbell-row" key={row.key}>
-                <span className="dumbbell-row__label">{row.label}</span>
-
-                <div
-                  className="dumbbell-track"
-                  aria-hidden="true"
-                  title={`До: ${formatValue(row.before, row.decimals)} ${row.unit} · После: ${formatValue(row.after, row.decimals)} ${row.unit}`}
-                >
-                  <span className="dumbbell-base" />
-                  <span
-                    className="dumbbell-connector"
-                    style={{ left: `${startPct}%`, width: `${widthPct}%` }}
-                  />
-                  <span
-                    className="dumbbell-dot dumbbell-dot--before"
-                    style={{ left: `${row.beforePct}%` }}
-                  />
-                  <span
-                    className="dumbbell-dot dumbbell-dot--after"
-                    style={{ left: `${row.afterPct}%` }}
-                  />
-                </div>
-
-                <span className="dumbbell-values">
-                  <span>{formatValue(row.before, row.decimals)}</span>
-                  <MoveRight size={12} aria-hidden="true" />
-                  <span>{formatValue(row.after, row.decimals)}</span>
-                  <small>{row.unit}</small>
-                </span>
-
-                <span
-                  className={`delta-chip${row.improved ? ' is-good' : ''}${row.worsened ? ' is-bad' : ''}`}
-                  title={`Изменение: ${formatChange(row.change)}`}
-                >
-                  {row.change < 0 ? (
-                    <ArrowDownRight size={13} aria-hidden="true" />
-                  ) : (
-                    <ArrowUpRight size={13} aria-hidden="true" />
-                  )}
-                  {formatChange(row.change)}
-                </span>
-              </li>
-            )
-          })}
-        </ul>
-
-        <div className="viz-foot">
-          <p className="viz-note">
-            <Info size={13} aria-hidden="true" />
-            Метрики синхронизированы с{' '}
-            <Link to="/editor">редактором КПСЦ</Link>.
-          </p>
-
-          <details className="viz-table">
-            <summary>Таблица значений</summary>
-            <table>
-              <caption className="sr-only">
-                Сравнение показателей потока в состояниях «До» и «После»
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col">Показатель</th>
-                  <th scope="col">До</th>
-                  <th scope="col">После</th>
-                  <th scope="col">Изменение</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.key}>
-                    <th scope="row">
-                      {row.label}, {row.unit}
-                    </th>
-                    <td>{formatValue(row.before, row.decimals)}</td>
-                    <td>{formatValue(row.after, row.decimals)}</td>
-                    <td className={row.improved ? 'is-good' : row.worsened ? 'is-bad' : ''}>
-                      {formatChange(row.change)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </details>
-        </div>
+      <section className="info-board" aria-label="Инфоцентр РЦК">
+        <article className="info-col c-safety">
+          <h3>Безопасность</h3>
+          <b className="info-big">0</b>
+          <span>травм / нарушений ОТ (0 инцидентов)</span>
+          <small>5S: лишние предметы на столах — см. 3D-цех</small>
+        </article>
+        <article className="info-col c-quality">
+          <h3>Качество</h3>
+          <b className="info-big">{cur.fpy}%</b>
+          <span>выход годных с первого предъявления (FPY)</span>
+          <small>
+            Принято заказчиком: {cur.accepted} шт · Брак в потоке: {rub(cur.defect)}
+            {balanced ? '' : ' → цель 95–100%'}
+          </small>
+        </article>
+        <article className="info-col c-delivery">
+          <h3>Поток и Такт</h3>
+          <b className="info-big">{fmt(takt)} сек</b>
+          <span>
+            Узкое место: Оператор №{bnNow.step} — {fmt(bnNow.sec)} сек ({fmt(bnNow.load, 1)}%)
+          </span>
+          <small>
+            Потолок: floor({fmt(ent.shift_duration_sec)}/{fmt(cur.maxCycle)}) = {cur.capacity} шт из плана {ent.target_output}; сдано {cur.accepted} шт
+          </small>
+        </article>
+        <article className="info-col c-cost">
+          <h3>Затраты</h3>
+          <b className="info-big">{kRub(cur.totalCost)}</b>
+          <span>{rub(cur.totalCost)} за смену</span>
+          <small>
+            Себестоимость 1 ед.: {cur.unitCost ? `${kRub(cur.unitCost)} (${rub(cur.unitCost)})` : '—'}
+          </small>
+        </article>
+        <article className="info-col c-wip">
+          <h3>НЗП / Запасы</h3>
+          <b className="info-big">
+            {fmt(ent.wip_start_cost / 1000, 1)}к → {fmt(cur.wipEnd / 1000, cur.wipEnd % 1000 ? 1 : 0)}к
+          </b>
+          <span>НЗП: {kRub(ent.wip_start_cost)} → {kRub(cur.wipEnd)}</span>
+          <small>
+            Заморожено {rub(cur.wipEnd - ent.wip_start_cost)} (партии по 2 шт){balanced ? ' — единичный поток' : ''}
+          </small>
+        </article>
       </section>
 
-      <section className="viz-card" aria-labelledby="sim-title">
-        <h2 id="sim-title" className="viz-title">
-          Быстрая симуляция
-        </h2>
-        <p className="viz-subtitle">
-          Двигайте ползунки — время цикла узких мест (загрузка &gt; 90%) меняется на лету,
-          и показатели пересчитываются.
-        </p>
+      <section className="viz-card dash-card">
+        <div className="dash-head">
+          <div>
+            <h2 className="viz-title">Диаграмма Ямадзуми — загрузка операторов 1–10</h2>
+            <p className="viz-subtitle">Красная пунктирная линия — такт {fmt(takt)} сек (100%).</p>
+          </div>
+          <div className="dash-actions">
+            {!balanced ? (
+              <button type="button" className="btn btn--primary" onClick={onBalance}>
+                <Scale size={15} aria-hidden="true" /> Автобалансировка потока
+              </button>
+            ) : (
+              <button type="button" className="btn" onClick={resetBalance}>
+                <RotateCcw size={15} aria-hidden="true" /> Сбросить к исходному (Раунд 1)
+              </button>
+            )}
+            <Link to="/tour" className="btn"><Box size={15} aria-hidden="true" /> Проверить в 3D-цехе</Link>
+          </div>
+        </div>
 
-        {bottlenecks.length > 0 && (
-          <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {bottlenecks.map((node) => (
-              <div key={node.id}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: 10,
-                  }}
-                >
-                  <span style={{ fontSize: 13, color: 'var(--text-2)' }}>
-                    {node.data.label}
-                  </span>
-                  <strong
-                    style={{
-                      fontSize: 13.5,
-                      color: 'var(--text)',
-                      fontVariantNumeric: 'tabular-nums',
-                    }}
-                  >
-                    {node.data.cycleTime} мин
-                  </strong>
+        <div className="yama">
+          <div className="yama-plot">
+            <div className="yama-takt" style={{ bottom: pct(takt) }}>
+              <span>Такт {fmt(takt)} сек</span>
+            </div>
+          </div>
+          {rows.map((r) => {
+            const d = deltaOf(r.id)
+            const over = r.sec > takt
+            const color = over ? 'over' : r.load >= 85 ? 'warn' : r.load < 50 ? 'under' : 'ok'
+            return (
+              <div className="yama-col" key={r.id}>
+                <span className="yama-delta">{d !== 0 ? `${d > 0 ? '+' : '−'}${Math.abs(d)} сек` : ''}</span>
+                <span className="yama-val">{fmt(r.sec)} с · {fmt(r.load, 1)}%</span>
+                <div className="yama-track">
+                  <div className={`yama-bar is-${color}`} style={{ height: pct(r.sec) }} />
                 </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="20"
-                  step="1"
-                  value={node.data.cycleTime}
-                  onChange={(event) =>
-                    updateNode(node.id, { cycleTime: Number(event.target.value) })
-                  }
-                  style={{ width: '100%', accentColor: 'var(--accent)' }}
-                />
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    marginTop: 6,
-                  }}
-                >
-                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>0 мин</span>
-                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>20 мин</span>
-                </div>
+                <span className="yama-name">Оп. №{r.step}{r.step === 10 ? ' ОТК' : ''}</span>
               </div>
-            ))}
+            )
+          })}
+        </div>
+
+        {balanced && (
+          <div className="protocol">
+            <h3>Протокол перераспределения операций</h3>
+            <ul>
+              {log.map((m, i) => (
+                <li key={i}>
+                  Оператор №{m.fromStep} → Оператор №{m.toStep}: <b>{m.sec} сек</b>
+                </li>
+              ))}
+            </ul>
+            <p>
+              Оператор №{bn.step}: {fmt(bn.sec)} сек ({fmt(bn.load, 1)}%) → {fmt(rows.find((r) => r.step === bn.step)?.sec)} сек (
+              {fmt(rows.find((r) => r.step === bn.step)?.load, 1)}%). Все 10 столов ≤ {fmt(takt)} сек. Узкое место теперь: Оператор №
+              {bnNow.step} — {fmt(bnNow.sec)} сек ({fmt(bnNow.load, 1)}%).
+            </p>
           </div>
         )}
+      </section>
 
-        {bottlenecks.length === 0 && (
-          <p className="viz-subtitle" style={{ marginTop: 14 }}>
-            Узких мест с загрузкой выше 90% в текущем потоке нет.
-          </p>
-        )}
+      <section className="viz-card dash-card">
+        <h2 className="viz-title">Финансовая модель смены: «До» и «После»</h2>
+        <div className="fin-params">
+          <label>Смена, сек<input type="number" min="1" value={ent.shift_duration_sec} onChange={(e) => setParam('shift_duration_sec', e.target.value)} /></label>
+          <label>План, шт<input type="number" min="1" value={ent.target_output} onChange={(e) => setParam('target_output', e.target.value)} /></label>
+          <label>Цена изделия, ₽<input type="number" min="1" value={ent.unit_price} onChange={(e) => setParam('unit_price', e.target.value)} /></label>
+          <span className="fin-formula">Такт = {fmt(ent.shift_duration_sec)} / {ent.target_output} = {fmt(takt)} сек</span>
+        </div>
+        <div className="fin-grid">
+          {[['До (Раунд 1 — Как есть)', before, 'is-before'], ['После (Сбалансированный поток)', after, 'is-after']].map(([title, s, cls]) => (
+            <div className={`fin-card ${cls}`} key={title}>
+              <h3>{title}</h3>
+              <dl>
+                <dt>Узкое место</dt><dd>{fmt(s.maxCycle)} сек → макс. {s.capacity} шт</dd>
+                <dt>Принято</dt><dd>{s.accepted} шт</dd>
+                <dt>Выручка</dt><dd>{s.accepted} × {fmt(ent.unit_price)} = {rub(s.revenue)}</dd>
+                <dt>ФОТ</dt><dd>{rub(ent.cost_fot)}</dd>
+                <dt>Оборудование и площади</dt><dd>{rub(ent.cost_equipment)}</dd>
+                <dt>Накладные</dt><dd>{rub(ent.cost_overhead)}</dd>
+                <dt>Материалы</dt><dd>{rub(ent.cost_materials)}</dd>
+                <dt>Итого затраты</dt><dd>{rub(s.totalCost)}</dd>
+                <dt>Себестоимость ед.</dt><dd>{s.unitCost ? rub(s.unitCost) : '—'}</dd>
+                <dt>Потери на браке</dt><dd>{rub(s.defect)}</dd>
+                <dt>Финансовый результат</dt>
+                <dd className={s.profit < 0 ? 'neg' : 'pos'}>
+                  {s.profit >= 0 ? '+' : ''}{rub(s.profit)}
+                  {s.defect ? ` (${rub(s.profitDefect)} с браком)` : ''}
+                </dd>
+              </dl>
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   )

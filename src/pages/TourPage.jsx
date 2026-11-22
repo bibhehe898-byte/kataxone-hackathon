@@ -1,241 +1,360 @@
-import {
-  ArrowRightLeft,
-  Briefcase,
-  Cog,
-  MapPin,
-  Move,
-  ScanEye,
-  Shield,
-  ZoomIn,
-} from 'lucide-react'
+import { Box, Camera, Flame, MapPin, Plus, Route as RouteIcon, ScanEye, Upload } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { assetUrl } from '../api/client'
+import Hall3D from '../components/tour3d/Hall3D'
+import XRayDrawer from '../components/tour3d/XRayDrawer'
 import PannellumViewer from '../components/PannellumViewer'
-import { TOUR_CONFIG } from '../data/tourData'
+import { useEnterpriseStore } from '../store/useEnterpriseStore'
 import { useVsmStore } from '../store/useVsmStore'
+import { findRounds, heatInfo, routeMetrics } from '../utils/metrics'
 import './TourPage.css'
+import './Tour3D.css'
 
-const WORKSHOP_2_PANORAMA_URL = `${import.meta.env.BASE_URL}panoramas/workshop2.png`
-
-const KIND_STYLES = {
-  operation: {
-    icon: Cog,
-    background: 'linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)',
-  },
-  control: {
-    icon: Shield,
-    background: 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)',
-  },
-  office: {
-    icon: Briefcase,
-    background: 'linear-gradient(135deg, #059669 0%, #34d399 100%)',
-  },
+const EMPTY_POI = {
+  title: '',
+  case_problem: '',
+  case_solution: '',
+  metric_before: '',
+  metric_after: '',
+  type: 'info',
+  node_id: '',
 }
 
-const DEFAULT_KIND_STYLE = {
-  icon: Cog,
-  background: 'linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)',
-}
+const LEGEND = [50, 70, 87, 95, 110].map((v) => heatInfo(v))
 
 export default function TourPage() {
+  const navigate = useNavigate()
+  const enterprises = useEnterpriseStore((s) => s.enterprises)
+  const loadEnterprises = useEnterpriseStore((s) => s.loadEnterprises)
+  const activeEnterpriseId = useEnterpriseStore((s) => s.activeEnterpriseId)
+  const activeWorkshopId = useEnterpriseStore((s) => s.activeWorkshopId)
+  const setActiveWorkshop = useEnterpriseStore((s) => s.setActiveWorkshop)
+  const setPanorama = useEnterpriseStore((s) => s.setPanorama)
+  const addPoi = useEnterpriseStore((s) => s.addPoi)
+  const tourFocusNodeId = useEnterpriseStore((s) => s.tourFocusNodeId)
+  const setTourFocusNodeId = useEnterpriseStore((s) => s.setTourFocusNodeId)
+
+  const [mode, setMode] = useState('3d')
+  const [showHeat, setShowHeat] = useState(true)
+  const [showSpaghetti, setShowSpaghetti] = useState(true)
+  const [showLegend, setShowLegend] = useState(true)
+  const [selectedId, setSelectedId] = useState(null)
+  const [constructor, setConstructor] = useState(false)
+  const [draft, setDraft] = useState(null) // { pitch, yaw }
+  const [form, setForm] = useState(EMPTY_POI)
   const viewerRef = useRef(null)
-  const view = useVsmStore((state) => state.view)
-  const setView = useVsmStore((state) => state.setView)
-  const nodes = useVsmStore((state) => state.flows[state.view].nodes)
-  const selectedNodeId = useVsmStore((state) => state.selectedNodeId)
-  const setSelectedNodeId = useVsmStore((state) => state.setSelectedNodeId)
-  const [activeSpotId, setActiveSpotId] = useState(null)
+  const fileRef = useRef(null)
 
-  // Цех 1 = состояние «До», Цех 2 = состояние «После».
-  // Панорама определяется текущим режимом стора.
-  const isWorkshop2 = view === 'after'
-
-  // При смене режима сбрасываем выбранную точку интереса.
   useEffect(() => {
-    setActiveSpotId(null)
-  }, [view])
+    if (!enterprises.length) loadEnterprises()
+  }, [enterprises.length, loadEnterprises])
 
-  const spots = useMemo(() => {
-    return nodes.map((node, index) => ({
-      id: node.id,
-      label: node.data.label ?? `Этап ${index + 1}`,
-      kind: node.data.kind ?? 'operation',
-      step: `Участок ${index + 1}`,
-      description: `Загрузка ${node.data.load ?? 0}% · ${node.data.cycleTime ?? 0} мин`,
-      yaw: -90 + index * 45,
-      pitch: 0,
-      hfov: 72,
-    }))
-  }, [nodes])
+  const enterprise = enterprises.find((e) => e.id === activeEnterpriseId) ?? enterprises[0] ?? null
+  const rounds = useMemo(() => findRounds(enterprise), [enterprise])
+  const workshop =
+    enterprise?.workshops.find((w) => w.id === activeWorkshopId) ?? rounds.r1 ?? enterprise?.workshops[0] ?? null
+  const takt = enterprise?.takt_time_sec || 120
+  const isR2 = workshop && rounds.r2 && workshop.id === rounds.r2.id
+  const nodes = workshop?.nodes ?? []
+  const selected = nodes.find((n) => n.id === selectedId) ?? null
+  const m1 = useMemo(() => routeMetrics(rounds.r1), [rounds.r1])
+  const m2 = useMemo(() => routeMetrics(rounds.r2), [rounds.r2])
 
-  const activeSpot = spots.find((spot) => spot.id === activeSpotId) ?? spots[0] ?? null
+  // Фокус из Редактора («Показать в 3D»).
+  useEffect(() => {
+    if (!tourFocusNodeId) return
+    const hit = nodes.find((n) => String(n.id) === String(tourFocusNodeId))
+    if (hit) setSelectedId(hit.id)
+    setTourFocusNodeId(null)
+  }, [tourFocusNodeId, nodes, setTourFocusNodeId])
 
-  const config = useMemo(() => {
-    const hotSpots = spots.map(({ yaw, pitch, label }) => ({
-      yaw,
-      pitch,
-      type: 'info',
-      text: label,
-      cssClass: 'tour-hotspot',
-    }))
+  const openEditor = (node) => {
+    const vsm = useVsmStore.getState()
+    vsm.setActiveWorkshop(`ws-${workshop.id}`)
+    vsm.setSelectedNodeId(`n-${node.id}`)
+    navigate('/editor')
+  }
 
-    if (isWorkshop2) {
-      return {
-        default: {
-          firstScene: 'workshop-2',
-          sceneFadeDuration: 800,
-          autoLoad: true,
-          showFullscreenCtrl: false,
-        },
-        scenes: {
-          'workshop-2': {
-            type: 'equirectangular',
-            panorama: WORKSHOP_2_PANORAMA_URL,
-            yaw: 180,
-            pitch: 0,
-            hfov: 95,
-            minHfov: 50,
-            maxHfov: 110,
-            hotSpots,
-          },
-        },
-      }
-    }
+  // ---------- 360° ----------
+  const panorama = assetUrl(workshop?.panorama_url) || `${import.meta.env.BASE_URL}panoramas/workshop-placeholder.png`
+  const pois = workshop?.pois ?? []
 
-    const sceneKey = Object.keys(TOUR_CONFIG.scenes)[0]
-    return {
-      ...TOUR_CONFIG,
+  const config = useMemo(
+    () => ({
+      default: { firstScene: 'workshop', autoLoad: true, showFullscreenCtrl: false },
       scenes: {
-        [sceneKey]: {
-          ...TOUR_CONFIG.scenes[sceneKey],
-          hotSpots,
+        workshop: {
+          type: 'equirectangular',
+          panorama,
+          hfov: 95,
+          minHfov: 50,
+          maxHfov: 110,
+          hotSpots: pois.map((p) => ({
+            yaw: p.yaw,
+            pitch: p.pitch,
+            type: 'info',
+            text: [p.title, p.metric_before && p.metric_after ? `${p.metric_before} → ${p.metric_after}` : '']
+              .filter(Boolean)
+              .join(' · '),
+            cssClass: 'tour-hotspot',
+          })),
         },
       },
-    }
-  }, [spots, isWorkshop2])
+    }),
+    [panorama, pois],
+  )
 
-  const handleViewerReady = useCallback((viewer) => {
+  const onReady = useCallback((viewer) => {
     viewerRef.current = viewer
   }, [])
 
-  const focusSpot = useCallback((spot) => {
-    setActiveSpotId(spot.id)
-    setSelectedNodeId(spot.id)
-    viewerRef.current?.lookAt(spot.pitch, spot.yaw, spot.hfov, 900)
-  }, [setSelectedNodeId])
+  const onPanoClick = (event) => {
+    if (!constructor || !viewerRef.current) return
+    const [pitch, yaw] = viewerRef.current.mouseEventToCoords(event)
+    setDraft({ pitch, yaw })
+    setForm(EMPTY_POI)
+  }
 
-  // Реверс-синхронизация: переход из редактора «Показать в 3D».
-  // Срабатывает только при монтировании тура, чтобы клик по POI в самом туре
-  // не «съедал» глобальный selectedNodeId до перехода в редактор.
-  const appliedPendingFocus = useRef(false)
+  const savePoi = async (e) => {
+    e.preventDefault()
+    if (!form.title.trim() || !draft) return
+    await addPoi(workshop.id, {
+      title: form.title.trim(),
+      case_problem: form.case_problem || null,
+      case_solution: form.case_solution || null,
+      metric_before: form.metric_before || null,
+      metric_after: form.metric_after || null,
+      node_id: form.node_id === '' ? null : isNaN(Number(form.node_id)) ? form.node_id : Number(form.node_id),
+      pitch: draft.pitch,
+      yaw: draft.yaw,
+    })
+    setDraft(null)
+  }
 
-  useEffect(() => {
-    if (appliedPendingFocus.current) return
-    appliedPendingFocus.current = true
+  const onUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (file && workshop) await setPanorama(workshop.id, file)
+    e.target.value = ''
+  }
 
-    if (!selectedNodeId) return
-    const spot = spots.find((item) => item.id === selectedNodeId)
-    if (spot) focusSpot(spot)
-    setSelectedNodeId(null)
-  }, [selectedNodeId, spots, focusSpot, setSelectedNodeId])
+  if (!workshop) {
+    return (
+      <section className="tour-page">
+        <div className="tour3d-empty">Загрузка предприятий…</div>
+      </section>
+    )
+  }
 
-  const kindStyle = activeSpot
-    ? KIND_STYLES[activeSpot.kind] ?? DEFAULT_KIND_STYLE
-    : DEFAULT_KIND_STYLE
-  const KindIcon = kindStyle.icon
+  const field = (key) => ({
+    value: form[key],
+    onChange: (ev) => setForm((f) => ({ ...f, [key]: ev.target.value })),
+  })
 
   return (
-    <section className="tour-page" aria-label="3D-тур по производственному цеху">
-      <PannellumViewer config={config} onReady={handleViewerReady} className="tour-viewer" />
+    <section className="tour-page tour3d-page" aria-label="Гибридный тур по цеху">
+      <div className="tour3d-stage">
+        {mode === '3d' ? (
+          <Hall3D
+            workshop={workshop}
+            takt={takt}
+            showHeat={showHeat}
+            showSpaghetti={showSpaghetti}
+            selectedId={selectedId}
+            onSelect={(n) => setSelectedId(n?.id ?? null)}
+          />
+        ) : (
+          <div
+            className={`tour3d-pano${constructor ? ' is-constructor' : ''}`}
+            onClickCapture={onPanoClick}
+          >
+            <PannellumViewer config={config} onReady={onReady} className="tour-viewer" />
+          </div>
+        )}
+      </div>
 
-      <div className="tour-overlay">
-        <div className="tour-panel">
-          <div className="tour-card">
-            <span className="page-eyebrow">
-              <ScanEye size={14} aria-hidden="true" />
-              3D-тур · MVP
-            </span>
-            <h1 className="tour-title">
-              {isWorkshop2 ? 'Производственный цех №2' : 'Производственный цех №1'}
-            </h1>
-            <p className="tour-copy">
-              Осмотрите участки потока в панораме. Выберите точку интереса — камера плавно
-              повернётся к нужному этапу.
-            </p>
-            <div className="tour-badges">
-              <span>{spots.length} точек интереса</span>
-              <span>2 панорамы</span>
-            </div>
-
+      <div className="tour3d-toolbar">
+        <div className="segmented">
+          <button type="button" className={mode === '3d' ? 'is-active' : ''} onClick={() => setMode('3d')}>
+            <Box size={14} /> 3D-двойник цеха
+          </button>
+          <button type="button" className={mode === '360' ? 'is-active' : ''} onClick={() => setMode('360')}>
+            <Camera size={14} /> 360° Панорама
+          </button>
+        </div>
+        <div className="segmented">
+          <button
+            type="button"
+            className={!isR2 ? 'is-active' : ''}
+            disabled={!rounds.r1}
+            onClick={() => rounds.r1 && setActiveWorkshop(rounds.r1.id)}
+          >
+            Раунд 1
+          </button>
+          <button
+            type="button"
+            className={isR2 ? 'is-active' : ''}
+            disabled={!rounds.r2}
+            onClick={() => rounds.r2 && setActiveWorkshop(rounds.r2.id)}
+          >
+            Раунд 2
+          </button>
+        </div>
+        {mode === '3d' ? (
+          <>
+            <button type="button" className={`btn${showHeat ? ' btn-primary' : ''}`} onClick={() => setShowHeat((v) => !v)}>
+              <Flame size={14} /> Тепловая карта
+            </button>
             <button
               type="button"
-              className="btn btn--primary"
-              style={{ width: '100%', justifyContent: 'center', marginTop: 14 }}
-              onClick={() => setView(isWorkshop2 ? 'before' : 'after')}
+              className={`btn${showSpaghetti ? ' btn-primary' : ''}`}
+              onClick={() => setShowSpaghetti((v) => !v)}
             >
-              <ArrowRightLeft size={15} aria-hidden="true" />
-              {isWorkshop2 ? 'Вернуться в Цех 1' : 'Перейти в Цех 2'}
+              <RouteIcon size={14} /> Диаграмма спагетти
+            </button>
+            <button type="button" className="btn" onClick={() => setShowLegend((v) => !v)}>
+              Легенда
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
+              <Upload size={14} /> Загрузить панораму
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" hidden onChange={onUpload} />
+            <button
+              type="button"
+              className={`btn${constructor ? ' btn-primary' : ''}`}
+              onClick={() => {
+                setConstructor((v) => !v)
+                setDraft(null)
+              }}
+            >
+              <Plus size={14} /> Режим конструктора POI
+            </button>
+          </>
+        )}
+      </div>
+
+      {mode === '3d' && (
+        <div className="tour3d-metrics">
+          <h3>
+            <ScanEye size={14} /> {workshop.name}
+          </h3>
+          <table>
+            <thead>
+              <tr>
+                <th />
+                <th>Раунд 1</th>
+                <th>Раунд 2</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Путь логиста, м</td>
+                <td>{m1.logistM}</td>
+                <td>{rounds.r2 ? m2.logistM : '—'}</td>
+              </tr>
+              <tr>
+                <td>Поток продукта, м</td>
+                <td>{m1.flowM}</td>
+                <td>{rounds.r2 ? m2.flowM : '—'}</td>
+              </tr>
+              <tr>
+                <td>Всего, м</td>
+                <td>{m1.totalM}</td>
+                <td>{rounds.r2 ? m2.totalM : '—'}</td>
+              </tr>
+              <tr>
+                <td>Транспорт, с</td>
+                <td>{m1.transportSec}</td>
+                <td>{rounds.r2 ? m2.transportSec : '—'}</td>
+              </tr>
+              <tr>
+                <td>Рейсов логиста</td>
+                <td>{m1.trips}</td>
+                <td>{rounds.r2 ? m2.trips : '—'}</td>
+              </tr>
+            </tbody>
+          </table>
+          <small>Такт {Math.round(takt)} с</small>
+        </div>
+      )}
+
+      {mode === '3d' && showLegend && showHeat && (
+        <div className="tour3d-legend">
+          {LEGEND.map((h) => (
+            <span key={h.key}>
+              <i style={{ background: h.color }} /> {h.label}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {mode === '3d' && (
+        <XRayDrawer node={selected} takt={takt} onClose={() => setSelectedId(null)} onOpenEditor={openEditor} />
+      )}
+
+      {mode === '360' && (
+        <div className="tour3d-poilist">
+          <h3>
+            <MapPin size={14} /> Точки интереса ({pois.length})
+          </h3>
+          {constructor && <p className="tour3d-hint">Кликните по панораме, чтобы поставить POI.</p>}
+          <ul>
+            {pois.map((p) => (
+              <li
+                key={p.id}
+                onClick={() => viewerRef.current?.lookAt(p.pitch, p.yaw, 70, 800)}
+              >
+                <strong>{p.title}</strong>
+                {p.metric_before && (
+                  <small>
+                    {p.metric_before} → {p.metric_after}
+                  </small>
+                )}
+                {p.case_problem && <small>Проблема: {p.case_problem}</small>}
+                {p.case_solution && <small>Решение: {p.case_solution}</small>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {mode === '360' && draft && (
+        <form className="tour3d-poiform poi-form" onSubmit={savePoi}>
+          <h3>Новая точка интереса</h3>
+          <small>
+            pitch {draft.pitch.toFixed(1)}° · yaw {draft.yaw.toFixed(1)}°
+          </small>
+          <input placeholder="Название" required {...field('title')} />
+          <textarea placeholder="Проблема" rows={2} {...field('case_problem')} />
+          <textarea placeholder="Решение" rows={2} {...field('case_solution')} />
+          <input placeholder="Метрика до" {...field('metric_before')} />
+          <input placeholder="Метрика после" {...field('metric_after')} />
+          <select {...field('type')}>
+            <option value="info">Информация</option>
+            <option value="problem">Проблема</option>
+            <option value="solution">Решение</option>
+          </select>
+          <select {...field('node_id')}>
+            <option value="">— без привязки к этапу —</option>
+            {nodes.map((n) => (
+              <option key={n.id} value={n.id}>
+                №{n.step_number} {n.name}
+              </option>
+            ))}
+          </select>
+          <div className="tour3d-poiform__actions">
+            <button type="button" className="btn" onClick={() => setDraft(null)}>
+              Отмена
+            </button>
+            <button type="submit" className="btn btn-primary">
+              Сохранить
             </button>
           </div>
-
-          {activeSpot && (
-            <div className="tour-card">
-              <div
-                aria-hidden="true"
-                className="tour-card__gradient"
-                style={{
-                  width: '100%',
-                  aspectRatio: '2 / 1',
-                  borderRadius: 12,
-                  backgroundImage: kindStyle.background,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'rgba(255, 255, 255, 0.92)',
-                }}
-              >
-                <KindIcon size={44} strokeWidth={1.6} />
-              </div>
-              <h2 style={{ marginTop: 12, fontSize: 15, fontWeight: 650 }}>
-                {activeSpot.label}
-              </h2>
-              <p className="tour-copy">{activeSpot.description}</p>
-            </div>
-          )}
-
-          <div className="tour-card tour-spots">
-            <h2 className="tour-spots__title">Точки интереса</h2>
-            <ul>
-              {spots.map((spot) => (
-                <li key={spot.id}>
-                  <button
-                    type="button"
-                    className={`hotspot-item${spot.id === activeSpot?.id ? ' is-active' : ''}`}
-                    onClick={() => focusSpot(spot)}
-                    aria-pressed={spot.id === activeSpot?.id}
-                  >
-                    <MapPin size={15} aria-hidden="true" />
-                    <span>
-                      <strong>{spot.label}</strong>
-                      <small>{spot.step}</small>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        <span className="tour-source">Тестовая панорама · замените файл в public/panoramas</span>
-      </div>
-
-      <div className="tour-hints" aria-hidden="true">
-        <span>
-          <Move size={14} /> Перетаскивание — осмотреться
-        </span>
-        <span>
-          <ZoomIn size={14} /> Колесо — масштаб
-        </span>
-      </div>
+        </form>
+      )}
     </section>
   )
 }

@@ -1,4 +1,4 @@
-import { CloudUpload, Layers, MousePointer2, Plus, RotateCcw, Save, ScanEye, Workflow, X } from 'lucide-react'
+import { CloudDownload, CloudUpload, Layers, MousePointer2, Plus, RotateCcw, Save, ScanEye, Trash2, Workflow, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactFlow, {
@@ -10,10 +10,12 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import VsmNode from '../components/VsmNode'
-import { FLOW_META } from '../data/vsmData'
 import { useVsmStore } from '../store/useVsmStore'
+import { useEnterpriseStore } from '../store/useEnterpriseStore'
 import './EditorPage.css'
 
+// Типы узлов вынесены на уровень модуля: объект создаётся ровно один раз и не
+// пересоздаётся при рендерах (React Flow ругается на новую ссылку nodeTypes).
 const NODE_TYPES = { vsm: VsmNode }
 
 const overlayStyle = {
@@ -70,7 +72,6 @@ const toValidNumber = (value) => {
 }
 
 function FlowCanvas({
-  view,
   nodes,
   edges,
   onNodesChange,
@@ -121,7 +122,6 @@ function FlowCanvas({
   return (
     <div className="editor-canvas">
       <ReactFlow
-        key={view}
         nodes={displayNodes}
         edges={edges}
         nodeTypes={NODE_TYPES}
@@ -134,14 +134,14 @@ function FlowCanvas({
         minZoom={0.2}
         maxZoom={1.8}
         deleteKeyCode={['Backspace', 'Delete']}
-        className={`vsm-flow vsm-flow--${view}`}
+        className="vsm-flow"
       >
         <Background variant="dots" gap={22} size={1.4} color="rgba(148, 178, 204, 0.2)" />
         <MiniMap
           pannable
           zoomable
           maskColor="rgba(5, 9, 14, 0.72)"
-          nodeColor={() => (view === 'before' ? '#3987e5' : '#199e70')}
+          nodeColor={() => '#38bdf8'}
           nodeStrokeWidth={0}
         />
         <Controls showInteractive={false} />
@@ -152,39 +152,73 @@ function FlowCanvas({
 
 export default function EditorPage() {
   const navigate = useNavigate()
-  const view = useVsmStore((state) => state.view)
-  const nodes = useVsmStore((state) => state.flows[state.view].nodes)
-  const edges = useVsmStore((state) => state.flows[state.view].edges)
-  const setView = useVsmStore((state) => state.setView)
+  const workshops = useVsmStore((state) => state.workshops)
+  const activeWorkshopId = useVsmStore((state) => state.activeWorkshopId)
+  const setActiveWorkshop = useVsmStore((state) => state.setActiveWorkshop)
+  const addWorkshop = useVsmStore((state) => state.addWorkshop)
+  const deleteWorkshop = useVsmStore((state) => state.deleteWorkshop)
   const onNodesChange = useVsmStore((state) => state.onNodesChange)
   const onEdgesChange = useVsmStore((state) => state.onEdgesChange)
   const addStep = useVsmStore((state) => state.addStep)
   const resetFlow = useVsmStore((state) => state.resetFlow)
   const onConnect = useVsmStore((state) => state.onConnect)
   const updateNode = useVsmStore((state) => state.updateNode)
+  const setSelectedNodeId = useVsmStore((state) => state.setSelectedNodeId)
   const saveFlowToServer = useVsmStore((state) => state.saveFlowToServer)
   const loadFlowFromServer = useVsmStore((state) => state.loadFlowFromServer)
-  const setSelectedNodeId = useVsmStore((state) => state.setSelectedNodeId)
 
   const [editing, setEditing] = useState(null)
-  const [saving, setSaving] = useState(false)
-  const [saveStatus, setSaveStatus] = useState(null)
 
-  useEffect(() => {
-    let cancelled = false
+  const activeWorkshop =
+    workshops.find((workshop) => workshop.id === activeWorkshopId) ?? workshops[0] ?? null
+  const nodes = activeWorkshop?.nodes ?? []
+  const edges = activeWorkshop?.edges ?? []
 
-    loadFlowFromServer().catch((error) => {
-      // 404 — граф ещё не сохранён: оставляем дефолтные данные из стора.
-      if (cancelled || error?.status === 404) return
-      console.warn('Не удалось загрузить граф с сервера:', error)
-    })
+  const handleSelectWorkshop = (id) => {
+    if (!id) return
+    setEditing(null)
+    setActiveWorkshop(id)
+  }
 
-    return () => {
-      cancelled = true
+  const handleAddWorkshop = () => {
+    const name = window.prompt('Название нового цеха:')
+    if (name === null) return
+    addWorkshop(name)
+  }
+
+  const handleSaveToServer = async () => {
+    try {
+      await saveFlowToServer()
+      window.alert('Цеха сохранены на сервер')
+    } catch (error) {
+      console.error('Не удалось сохранить цеха на сервер', error)
+      window.alert('Не удалось сохранить цеха на сервер')
     }
-  }, [view, loadFlowFromServer])
+  }
 
-  const meta = FLOW_META[view]
+  const handleLoadFromServer = async () => {
+    try {
+      await loadFlowFromServer()
+    } catch (error) {
+      console.error('Не удалось загрузить цеха с сервера', error)
+      window.alert('Не удалось загрузить цеха с сервера')
+    }
+  }
+
+  const handleResetFlow = () => {
+    const confirmed = window.confirm(
+      'Вы уверены, что хотите сбросить этот цех? Все добавленные этапы будут удалены.',
+    )
+    if (!confirmed) return
+    resetFlow()
+  }
+
+  const handleDeleteWorkshop = () => {
+    if (workshops.length <= 1) return
+    const confirmed = window.confirm('Удалить этот цех?')
+    if (!confirmed) return
+    deleteWorkshop(activeWorkshopId)
+  }
 
   const handleNodeClick = (node) => {
     setEditing({
@@ -207,23 +241,11 @@ export default function EditorPage() {
     setEditing(null)
   }
 
-  const handleSaveToServer = async () => {
-    setSaving(true)
-    setSaveStatus(null)
-    try {
-      await saveFlowToServer()
-      setSaveStatus({ type: 'ok', text: 'Граф сохранён на сервере' })
-    } catch {
-      setSaveStatus({ type: 'error', text: 'Не удалось сохранить граф' })
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const handleShowIn3D = () => {
     setSelectedNodeId(editing.id)
+    useEnterpriseStore.getState().setTourFocusNodeId(String(editing.id).replace(/^n-/, ''))
     setEditing(null)
-    navigate('/')
+    navigate('/tour')
   }
 
   return (
@@ -237,31 +259,48 @@ export default function EditorPage() {
             </span>
             <h1 className="page-title">Карта потока создания ценности</h1>
             <p className="page-subtitle">
-              Схема «До» и «После» хранится в Zustand-сторе. Перетаскивайте этапы,
-              добавляйте и удаляйте их — дашборд пересчитается автоматически.
+              Динамический список цехов. Перетаскивайте этапы, добавляйте и удаляйте их —
+              каждый цех хранит свою карту потока.
             </p>
           </div>
 
           <div className="page-actions">
-            <div className="segmented" role="group" aria-label="Версия потока">
-              <button
-                type="button"
-                className={view === 'before' ? 'is-active' : ''}
-                onClick={() => setView('before')}
-                aria-pressed={view === 'before'}
-              >
-                До
-              </button>
-              <button
-                type="button"
-                className={view === 'after' ? 'is-active' : ''}
-                onClick={() => setView('after')}
-                aria-pressed={view === 'after'}
-              >
-                После
-              </button>
+            <div className="segmented" role="tablist" aria-label="Цеха">
+              {workshops.map((workshop, index) => (
+                <button
+                  key={workshop.id || index}
+                  type="button"
+                  role="tab"
+                  className={workshop.id === activeWorkshopId ? 'is-active' : ''}
+                  onClick={() => handleSelectWorkshop(workshop.id)}
+                  aria-selected={workshop.id === activeWorkshopId}
+                >
+                  {workshop.name || `Цех ${index + 1}`}
+                </button>
+              ))}
             </div>
-            <button type="button" className="btn" onClick={resetFlow}>
+            <button type="button" className="btn" onClick={handleAddWorkshop}>
+              <Plus size={16} aria-hidden="true" />
+              Добавить цех
+            </button>
+            <button type="button" className="btn" onClick={handleSaveToServer}>
+              <CloudUpload size={16} aria-hidden="true" />
+              Сохранить на сервер
+            </button>
+            <button type="button" className="btn" onClick={handleLoadFromServer}>
+              <CloudDownload size={16} aria-hidden="true" />
+              Загрузить с сервера
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={handleDeleteWorkshop}
+              disabled={workshops.length <= 1}
+            >
+              <Trash2 size={15} aria-hidden="true" />
+              Удалить цех
+            </button>
+            <button type="button" className="btn" onClick={handleResetFlow}>
               <RotateCcw size={15} aria-hidden="true" />
               Сбросить
             </button>
@@ -269,22 +308,13 @@ export default function EditorPage() {
               <Plus size={16} aria-hidden="true" />
               Добавить этап
             </button>
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={handleSaveToServer}
-              disabled={saving}
-            >
-              <CloudUpload size={16} aria-hidden="true" />
-              {saving ? 'Сохранение…' : 'Сохранить на сервер'}
-            </button>
           </div>
         </header>
 
         <div className="editor-meta" aria-live="polite">
-          <span className={`editor-chip editor-chip--${view}`}>
-            <span className="editor-chip__dot" aria-hidden="true" />
-            {meta.title}
+          <span className="editor-chip">
+            <span className="editor-chip__dot" style={{ background: 'var(--accent)' }} aria-hidden="true" />
+            {activeWorkshop?.name || 'Цех'}
           </span>
           <span className="editor-chip">
             <Layers size={13} aria-hidden="true" />
@@ -296,20 +326,11 @@ export default function EditorPage() {
           </span>
           <span className="editor-hint">
             <MousePointer2 size={13} aria-hidden="true" />
-            {meta.subtitle}. Delete — удалить выбранное.
+            Перетаскивайте этапы, добавляйте и удаляйте их. Delete — удалить выбранное.
           </span>
-          {saveStatus && (
-            <span
-              role="status"
-              style={{ color: saveStatus.type === 'ok' ? '#199e70' : '#e5484d' }}
-            >
-              {saveStatus.text}
-            </span>
-          )}
         </div>
 
         <FlowCanvas
-          view={view}
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}

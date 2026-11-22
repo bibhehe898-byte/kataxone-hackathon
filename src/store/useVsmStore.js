@@ -8,19 +8,33 @@ const API_URL = 'http://127.0.0.1:8000'
 
 const cloneFlow = (flow) => structuredClone(flow)
 
-const INITIAL_FLOWS = {
-  before: cloneFlow(initialBeforeFlow),
-  after: cloneFlow(initialAfterFlow),
-}
-
-const updateCurrentFlow = (state, updater) => {
-  const current = state.flows[state.view]
-  return {
-    flows: { ...state.flows, [state.view]: updater(current) },
+const generateWorkshopId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `w-${crypto.randomUUID()}`
   }
+  return `w-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
-let nextNodeId = 1
+const INITIAL_WORKSHOPS = [
+  {
+    id: 'w1',
+    name: 'Цех 1 (Текущий)',
+    nodes: cloneFlow(initialBeforeFlow.nodes),
+    edges: cloneFlow(initialBeforeFlow.edges),
+  },
+  {
+    id: 'w2',
+    name: 'Цех 2 (Целевой)',
+    nodes: cloneFlow(initialAfterFlow.nodes),
+    edges: cloneFlow(initialAfterFlow.edges),
+  },
+]
+
+const defaultForWorkshop = (workshop) => {
+  if (workshop.id === 'w1') return initialBeforeFlow
+  if (workshop.id === 'w2') return initialAfterFlow
+  return { nodes: [], edges: [] }
+}
 
 const NEW_EDGE_DEFAULTS = {
   type: 'smoothstep',
@@ -33,53 +47,158 @@ const NEW_EDGE_DEFAULTS = {
   style: { stroke: 'rgba(148, 178, 204, 0.42)', strokeWidth: 1.6 },
 }
 
+const updateActiveWorkshop = (state, updater) => {
+  // Защита: если activeWorkshopId не найден среди цехов (например, undefined),
+  // возвращаем тот же state — zustand увидит ту же ссылку и ничего не изменит.
+  const activeExists = state.workshops.some((workshop) => workshop.id === state.activeWorkshopId)
+  if (!activeExists) return state
+  return {
+    workshops: state.workshops.map((workshop) =>
+      workshop.id === state.activeWorkshopId ? updater(workshop) : workshop,
+    ),
+  }
+}
+
 export const useVsmStore = create(persist((set, get) => ({
-  view: 'before',
-  flows: INITIAL_FLOWS,
+  workshops: INITIAL_WORKSHOPS,
+  activeWorkshopId: 'w1',
   selectedNodeId: null,
 
-  setView: (view) => set({ view }),
+  setActiveWorkshop: (id) => {
+    // Защита: не даём activeWorkshopId стать undefined/null/"".
+    if (!id) return
+    return set({ activeWorkshopId: id })
+  },
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
+
+  // Синхронизация с активным предприятием (useEnterpriseStore): цеха и этапы VENIO-C
+  // отображаются в Редакторе КПСЦ. id узлов: `n-<id>`, id цехов: `ws-<id>`.
+  syncFromEnterprise: (enterprise) => {
+    if (!enterprise?.workshops?.length) return
+    const takt = enterprise.takt_time_sec || 120
+    const workshops = enterprise.workshops.map((ws) => {
+      const ops = ws.nodes
+        .filter((n) => n.kind === 'operation' || n.kind === 'control')
+        .sort((a, b) => a.step_number - b.step_number)
+      const nodes = ops.map((n, i) => ({
+        id: `n-${n.id}`,
+        type: 'vsm',
+        position: { x: 20 + (i % 5) * 270, y: 60 + Math.floor(i / 5) * 230 },
+        data: {
+          label: n.name.replace(/^Оператор №\d+:\s*/, `№${n.step_number} `),
+          kind: n.kind,
+          cycleTime: n.cycle_time_sec,
+          leadTime: n.cycle_time_sec,
+          load: Math.round((n.cycle_time_sec / takt) * 100),
+          cost: 0,
+          bottleneck: n.is_bottleneck,
+        },
+      }))
+      const edges = nodes.slice(1).map((n, i) => createEdge(nodes[i].id, n.id))
+      return { id: `ws-${ws.id}`, name: ws.name, nodes, edges }
+    })
+    set((state) => {
+      const keep = workshops.some((w) => w.id === state.activeWorkshopId)
+      return { workshops, activeWorkshopId: keep ? state.activeWorkshopId : workshops[0].id }
+    })
+  },
+
+  addWorkshop: (name) =>
+    set((state) => {
+      const finalName = (name ?? '').trim() || `Цех ${state.workshops.length + 1}`
+
+      const existingIds = new Set(state.workshops.map((workshop) => workshop.id))
+      let id = generateWorkshopId()
+      while (existingIds.has(id)) {
+        id = generateWorkshopId()
+      }
+
+      const workshop = {
+        id,
+        name: finalName,
+        nodes: [],
+        edges: [],
+      }
+
+      return {
+        workshops: [...state.workshops, workshop],
+        activeWorkshopId: id,
+      }
+    }),
+
+  deleteWorkshop: (id) =>
+    set((state) => {
+      if (state.workshops.length <= 1) return state
+
+      const workshops = state.workshops.filter((workshop) => workshop.id !== id)
+      if (workshops.length === state.workshops.length) return state
+
+      return {
+        workshops,
+        activeWorkshopId:
+          state.activeWorkshopId === id ? workshops[0]?.id : state.activeWorkshopId,
+      }
+    }),
 
   onNodesChange: (changes) =>
     set((state) =>
-      updateCurrentFlow(state, (flow) => ({
-        ...flow,
-        nodes: applyNodeChanges(changes, flow.nodes),
+      updateActiveWorkshop(state, (workshop) => ({
+        ...workshop,
+        nodes: applyNodeChanges(changes, workshop.nodes),
       })),
     ),
 
   onEdgesChange: (changes) =>
     set((state) =>
-      updateCurrentFlow(state, (flow) => ({
-        ...flow,
-        edges: applyEdgeChanges(changes, flow.edges),
+      updateActiveWorkshop(state, (workshop) => ({
+        ...workshop,
+        edges: applyEdgeChanges(changes, workshop.edges),
       })),
     ),
 
   onConnect: (connection) =>
     set((state) =>
-      updateCurrentFlow(state, (flow) => ({
-        ...flow,
-        edges: addEdge({ ...connection, ...NEW_EDGE_DEFAULTS }, flow.edges),
+      updateActiveWorkshop(state, (workshop) => ({
+        ...workshop,
+        edges: addEdge({ ...connection, ...NEW_EDGE_DEFAULTS }, workshop.edges),
       })),
     ),
 
   updateNode: (id, patch) =>
     set((state) =>
-      updateCurrentFlow(state, (flow) => ({
-        ...flow,
-        nodes: flow.nodes.map((node) =>
+      updateActiveWorkshop(state, (workshop) => ({
+        ...workshop,
+        nodes: workshop.nodes.map((node) =>
           node.id === id ? { ...node, data: { ...node.data, ...patch } } : node,
         ),
       })),
     ),
 
+  updateNodeInWorkshop: (workshopId, nodeId, patch) =>
+    set((state) => ({
+      workshops: state.workshops.map((workshop) =>
+        workshop.id === workshopId
+          ? {
+              ...workshop,
+              nodes: workshop.nodes.map((node) =>
+                node.id === nodeId ? { ...node, data: { ...node.data, ...patch } } : node,
+              ),
+            }
+          : workshop,
+      ),
+    })),
+
   addStep: () =>
     set((state) =>
-      updateCurrentFlow(state, (flow) => {
-        const lastNode = flow.nodes.at(-1)
-        const id = `step-${nextNodeId++}`
+      updateActiveWorkshop(state, (workshop) => {
+        const lastNode = workshop.nodes.at(-1)
+        // ID этапа выводим из уже существующих узлов цеха, чтобы после F5
+        // не создавались дубликаты (модульный счётчик обнулялся бы при перезагрузке).
+        const stepNumber = workshop.nodes.reduce((max, node) => {
+          const match = /^step-(\d+)$/.exec(node.id ?? '')
+          return match ? Math.max(max, Number(match[1])) : max
+        }, 0) + 1
+        const id = `step-${stepNumber}`
         const newNode = {
           id,
           type: 'vsm',
@@ -88,7 +207,7 @@ export const useVsmStore = create(persist((set, get) => ({
             y: lastNode?.position.y ?? 150,
           },
           data: {
-            label: `Новый этап ${flow.nodes.length + 1}`,
+            label: `Новый этап ${workshop.nodes.length + 1}`,
             kind: 'operation',
             cycleTime: 0,
             leadTime: 5,
@@ -96,68 +215,81 @@ export const useVsmStore = create(persist((set, get) => ({
         }
 
         return {
-          nodes: [...flow.nodes, newNode],
-          edges: lastNode ? [...flow.edges, createEdge(lastNode.id, id)] : flow.edges,
+          nodes: [...workshop.nodes, newNode],
+          edges: lastNode ? [...workshop.edges, createEdge(lastNode.id, id)] : workshop.edges,
         }
       }),
     ),
 
   resetFlow: () =>
-    set((state) => ({
-      flows: {
-        ...state.flows,
-        [state.view]: cloneFlow(state.view === 'before' ? initialBeforeFlow : initialAfterFlow),
-      },
-    })),
+    set((state) =>
+      updateActiveWorkshop(state, (workshop) => {
+        const source = defaultForWorkshop(workshop)
+        return {
+          ...workshop,
+          nodes: cloneFlow(source.nodes),
+          edges: cloneFlow(source.edges),
+        }
+      }),
+    ),
 
   saveFlowToServer: async () => {
-    const { view, flows } = get()
     const token = useAuthStore.getState().token
-
-    const response = await fetch(`${API_URL}/api/flows/${view}`, {
+    const response = await fetch(`${API_URL}/api/workshops`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        nodes: flows[view].nodes,
-        edges: flows[view].edges,
-      }),
+      body: JSON.stringify({ workshops: get().workshops }),
     })
-
     if (!response.ok) {
-      throw new Error('Не удалось сохранить граф на сервере')
+      throw new Error(`Не удалось сохранить цеха: ${response.status}`)
     }
-
-    return response.json()
   },
 
   loadFlowFromServer: async () => {
-    const { view } = get()
     const token = useAuthStore.getState().token
-
-    const response = await fetch(`${API_URL}/api/flows/${view}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+    const response = await fetch(`${API_URL}/api/workshops`, {
+      headers: { Authorization: `Bearer ${token}` },
     })
-
+    // 404 означает «данных ещё нет» — это нормальная ситуация, ничего не делаем.
+    if (response.status === 404) return
     if (!response.ok) {
-      const error = new Error('Не удалось загрузить граф с сервера')
-      error.status = response.status
-      throw error
+      throw new Error(`Не удалось загрузить цеха: ${response.status}`)
     }
 
-    const data = await response.json()
+    const workshops = await response.json()
+    // Пустой массив тоже ничего не делаем — иначе затёрли бы локальные цеха.
+    if (!Array.isArray(workshops) || workshops.length === 0) return
 
-    set((state) => ({
-      flows: {
-        ...state.flows,
-        [view]: { nodes: data.nodes, edges: data.edges },
-      },
-    }))
-
-    return data
+    set({
+      workshops,
+      activeWorkshopId: workshops[0]?.id ?? 'w1',
+    })
   },
-}), { name: 'kataxone-vsm', partialize: (state) => ({ flows: state.flows }) }))
+}), {
+  name: 'kataxone-vsm-v2',
+  version: 5,
+  // Сохраняем только сами цеха. activeWorkshopId намеренно не персистим:
+  // после F5 активным снова становится первый цех (w1), но созданные цеха не теряются.
+  partialize: (state) => ({ workshops: state.workshops }),
+  // Данные версии < 5 могли содержать цеха без ID (или с одинаковыми ID) —
+  // из-за этого табы «слипались». Принудительно сбрасываем их на чистые INITIAL_WORKSHOPS.
+  migrate: (persistedState, version) =>
+    version < 5 ? { workshops: cloneFlow(INITIAL_WORKSHOPS) } : persistedState,
+  merge: (persistedState, currentState) => {
+    // Страховка: если битые данные всё же просочились (цех без id) — генерируем id.
+    const workshops = Array.isArray(persistedState.workshops)
+      ? persistedState.workshops.map((workshop) =>
+          workshop?.id ? workshop : { ...workshop, id: generateWorkshopId() },
+        )
+      : cloneFlow(INITIAL_WORKSHOPS)
+    return {
+      ...currentState,
+      ...persistedState,
+      workshops,
+      activeWorkshopId: currentState.activeWorkshopId,
+    }
+  },
+}))
