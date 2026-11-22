@@ -444,7 +444,7 @@ export default function EditorPage() {
               </label>
 
               <label style={fieldStyle}>
-                <span style={labelStyle}>Время цикла, мин</span>
+                <span style={labelStyle}>Время цикла, с</span>
                 <input
                   type="number"
                   min="0"

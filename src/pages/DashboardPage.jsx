@@ -75,8 +75,8 @@ export default function DashboardPage() {
     const a = rows.find((r) => r.id === id)?.sec ?? 0
     return a - b
   }
-  const bn = baseRows.reduce((m, r) => (r.sec > m.sec ? r : m), baseRows[0])
-  const bnNow = rows.reduce((m, r) => (r.sec > m.sec ? r : m), rows[0])
+  const bn = baseRows.reduce((m, r) => (r.sec > m.sec ? r : m), baseRows[0] ?? { step: '—', sec: 0, load: 0 })
+  const bnNow = rows.reduce((m, r) => (r.sec > m.sec ? r : m), rows[0] ?? { step: '—', sec: 0, load: 0 })
 
   const onBalance = () => {
     autoBalance()

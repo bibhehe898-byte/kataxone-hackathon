@@ -2,6 +2,7 @@ import { CircleAlert, Lock, LogIn, ShieldCheck, User } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/useAuthStore'
+import { API_BASE } from '../api/client'
 import './LoginPage.css'
 
 export default function LoginPage() {
@@ -26,7 +27,7 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/login', {
+      const response = await fetch(`${API_BASE}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: loginValue, password }),

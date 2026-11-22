@@ -8,7 +8,7 @@ const KIND_LABELS = {
 }
 
 export default function VsmNode({ data, selected }) {
-  const isBottleneck = (data.load ?? 0) > 90
+  const isBottleneck = data.bottleneck ?? (data.load ?? 0) > 90
 
   return (
     <div
@@ -20,11 +20,11 @@ export default function VsmNode({ data, selected }) {
       <div className="vsm-node__metrics">
         <span title="Время цикла">
           <Timer size={11} aria-hidden="true" />
-          CT {data.cycleTime} мин
+          CT {data.cycleTime} с
         </span>
         <span title="Время протекания">
           <Clock size={11} aria-hidden="true" />
-          LT {data.leadTime} ч
+          LT {data.leadTime} с
         </span>
         <span title="Загрузка">
           <Gauge size={11} aria-hidden="true" />

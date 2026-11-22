@@ -122,7 +122,7 @@ export const useVsmStore = create(persist((set, get) => ({
         type: 'vsm',
         position: { x: 20 + (i % 5) * 270, y: 60 + Math.floor(i / 5) * 230 },
         data: {
-          label: n.name.replace(/^Оператор №\d+:\s*/, `№${n.step_number} `),
+          label: n.name,
           kind: n.kind,
           cycleTime: n.cycle_time_sec,
           leadTime: n.cycle_time_sec,
