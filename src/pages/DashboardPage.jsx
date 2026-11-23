@@ -18,20 +18,22 @@ function stationRows(workshop, takt) {
 }
 
 function scenario(ent, workshop, balanced) {
-  const takt = ent.shift_duration_sec / (ent.target_output || 1)
+  const shift = Number(ent.shift_duration_sec) || 0
+  const takt = shift ? shift / (Number(ent.target_output) || 1) : 0
   const maxCycle = bottleneckOf(workshop)?.cycle_time_sec ?? 0
-  const capacity = maxCycle ? Math.floor(ent.shift_duration_sec / maxCycle) : 0
-  const accepted = balanced ? Math.min(ent.target_output, capacity) : Math.min(REAL_ACCEPTED_R1, capacity)
-  const totalCost = ent.cost_fot + ent.cost_equipment + ent.cost_overhead + ent.cost_materials
-  const revenue = accepted * ent.unit_price
-  const defect = balanced ? 0 : ent.defect_in_flow_cost
+  const capacity = maxCycle > 0 ? Math.floor(shift / maxCycle) : 0
+  const targetOutput = Number(ent.target_output) || 0
+  const accepted = balanced ? Math.min(targetOutput, capacity) : Math.min(REAL_ACCEPTED_R1, capacity)
+  const totalCost = (ent.cost_fot ?? 0) + (ent.cost_equipment ?? 0) + (ent.cost_overhead ?? 0) + (ent.cost_materials ?? 0)
+  const revenue = accepted * (ent.unit_price ?? 0)
+  const defect = balanced ? 0 : ent.defect_in_flow_cost ?? 0
   return {
     takt, maxCycle, capacity, accepted, totalCost, revenue, defect,
     unitCost: accepted ? totalCost / accepted : null,
     profit: revenue - totalCost,
     profitDefect: revenue - totalCost - defect,
     fpy: balanced ? 100 : 33,
-    wipEnd: balanced ? ent.wip_start_cost : ent.wip_end_cost,
+    wipEnd: balanced ? ent.wip_start_cost ?? 0 : ent.wip_end_cost ?? 0,
   }
 }
 
@@ -44,7 +46,7 @@ export default function DashboardPage() {
   const balanceLog = useEnterpriseStore((s) => s.balanceLog)
   const log = balanceLog[ent?.id] ?? []
   const baseline = useEnterpriseStore((s) => s.originalBaseline[s.activeEnterpriseId])
-  const { loadEnterprises, autoBalance, resetBalance, updateEnterpriseParams, fetchAutobalancePreview } = useEnterpriseStore.getState()
+  const { loadEnterprises, autoBalance, resetBalance, updateEnterpriseParams } = useEnterpriseStore.getState()
 
   useEffect(() => {
     if (!useEnterpriseStore.getState().enterprises.length) loadEnterprises()
@@ -61,26 +63,33 @@ export default function DashboardPage() {
   }, [ent, r1])
 
   if (!ent || !r1 || !before) {
-    return <div className="page dashboard-page"><p className="ent-muted">Загрузка предприятия…</p></div>
+    return (
+      <div className="page dashboard-page">
+        <p className="ent-muted">
+          {ent ? 'В предприятии нет цехов. Добавьте цех в Редакторе КПСЦ.' : 'Нет предприятий или идёт загрузка…'}
+        </p>
+      </div>
+    )
   }
 
   const takt = before.takt
   const baseRows = stationRows(balanced && baseline ? baseline : r1, takt)
   const rows = stationRows(r1, takt)
   const cur = balanced ? after : before
-  const maxSec = Math.max(takt * 1.6, ...baseRows.map((r) => r.sec), ...rows.map((r) => r.sec))
-  const pct = (sec) => `${(sec / maxSec) * 100}%`
+  const maxSec = Math.max(takt * 1.6, ...baseRows.map((r) => r.sec), ...rows.map((r) => r.sec)) || 1
+  const pct = (sec) => `${Math.min(100, ((sec || 0) / maxSec) * 100)}%`
   const deltaOf = (id) => {
     const b = baseRows.find((r) => r.id === id)?.sec ?? 0
     const a = rows.find((r) => r.id === id)?.sec ?? 0
     return a - b
   }
   const bn = baseRows.reduce((m, r) => (r.sec > m.sec ? r : m), baseRows[0] ?? { step: '—', sec: 0, load: 0 })
-  const bnNow = rows.reduce((m, r) => (r.sec > m.sec ? r : m), rows[0] ?? { step: '—', sec: 0, load: 0 })
+    const bnRow = rows.find((r) => r.step === bn.step)
 
+  const bnNow = rows.reduce((m, r) => (r.sec > m.sec ? r : m), rows[0] ?? { step: '—', sec: 0, load: 0 })
   const onBalance = () => {
+    // Автобалансировка локальна и мгновенно пишет в оба стора (enterprise + vsm).
     autoBalance()
-    fetchAutobalancePreview()
   }
   const setParam = (key, v) => {
     const n = Number(v)
@@ -137,11 +146,11 @@ export default function DashboardPage() {
         <article className="info-col c-wip">
           <h3>НЗП / Запасы</h3>
           <b className="info-big">
-            {fmt(ent.wip_start_cost / 1000, 1)}к → {fmt(cur.wipEnd / 1000, cur.wipEnd % 1000 ? 1 : 0)}к
+            {fmt((ent.wip_start_cost ?? 0) / 1000, 1)}к → {fmt(cur.wipEnd / 1000, cur.wipEnd % 1000 ? 1 : 0)}к
           </b>
-          <span>НЗП: {kRub(ent.wip_start_cost)} → {kRub(cur.wipEnd)}</span>
+          <span>НЗП: {kRub(ent.wip_start_cost ?? 0)} → {kRub(cur.wipEnd)}</span>
           <small>
-            Заморожено {rub(cur.wipEnd - ent.wip_start_cost)} (партии по 2 шт){balanced ? ' — единичный поток' : ''}
+            Заморожено {rub(cur.wipEnd - (ent.wip_start_cost ?? 0))} (партии по 2 шт){balanced ? ' — единичный поток' : ''}
           </small>
         </article>
       </section>
@@ -200,8 +209,8 @@ export default function DashboardPage() {
               ))}
             </ul>
             <p>
-              Оператор №{bn.step}: {fmt(bn.sec)} сек ({fmt(bn.load, 1)}%) → {fmt(rows.find((r) => r.step === bn.step)?.sec)} сек (
-              {fmt(rows.find((r) => r.step === bn.step)?.load, 1)}%). Все 10 столов ≤ {fmt(takt)} сек. Узкое место теперь: Оператор №
+              Оператор №{bn.step}: {fmt(bn.sec)} сек ({fmt(bn.load, 1)}%) → {fmt(bnRow?.sec ?? 0)} сек (
+              {fmt(bnRow?.load ?? 0, 1)}%). Все столы ≤ {fmt(takt)} сек. Узкое место теперь: Оператор №
               {bnNow.step} — {fmt(bnNow.sec)} сек ({fmt(bnNow.load, 1)}%).
             </p>
           </div>

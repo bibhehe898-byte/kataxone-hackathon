@@ -66,10 +66,10 @@ export default function TourPage() {
   // Фокус из Редактора («Показать в 3D»).
   useEffect(() => {
     if (!tourFocusNodeId) return
-    const hit = nodes.find((n) => String(n.id) === String(tourFocusNodeId))
+    const hit = (workshop?.nodes ?? []).find((n) => String(n.id) === String(tourFocusNodeId))
     if (hit) setSelectedId(hit.id)
     setTourFocusNodeId(null)
-  }, [tourFocusNodeId, nodes, setTourFocusNodeId])
+  }, [tourFocusNodeId, workshop, setTourFocusNodeId])
 
   const openEditor = (node) => {
     const vsm = useVsmStore.getState()
@@ -80,7 +80,6 @@ export default function TourPage() {
 
   // ---------- 360° ----------
   const panorama = assetUrl(workshop?.panorama_url)
-  const pois = workshop?.pois ?? []
 
   const config = useMemo(
     () => ({
@@ -92,7 +91,7 @@ export default function TourPage() {
           hfov: 95,
           minHfov: 50,
           maxHfov: 110,
-          hotSpots: pois.map((p) => ({
+          hotSpots: (workshop?.pois ?? []).map((p) => ({
             yaw: p.yaw,
             pitch: p.pitch,
             type: 'info',
@@ -104,7 +103,7 @@ export default function TourPage() {
         },
       },
     }),
-    [panorama, pois],
+    [panorama, workshop],
   )
 
   const onReady = useCallback((viewer) => {
@@ -314,13 +313,13 @@ export default function TourPage() {
       {mode === '360' && (
         <div className="tour3d-poilist">
           <h3>
-            <MapPin size={14} /> Точки интереса ({pois.length})
+            <MapPin size={14} /> Точки интереса ({(workshop?.pois ?? []).length})
           </h3>
           {constructor && <p className="tour3d-hint">Кликните по панораме, чтобы поставить POI.</p>}
           <ul>
-            {pois.map((p) => (
+            {(workshop?.pois ?? []).map((p, i) => (
               <li
-                key={p.id}
+                key={p.id ?? `draft-${i}`}
                 onClick={() => viewerRef.current?.lookAt(p.pitch, p.yaw, 70, 800)}
               >
                 <strong>{p.title}</strong>

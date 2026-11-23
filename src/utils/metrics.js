@@ -59,7 +59,9 @@ export function computeBalancePlan(workshop, takt, { targetLoad = 0.8, capLoad =
   const donor = bottleneckOf(workshop)
   if (!donor || !takt || donor.cycle_time_sec <= takt) return { cycles, moves, donor }
   const cap = Math.floor(takt * capLoad)
-  let toMove = donor.cycle_time_sec - Math.min(Math.round(takt * targetLoad), takt)
+  const goal = Math.min(Math.round(takt * targetLoad), cap)
+  let toMove = donor.cycle_time_sec - goal
+  if (toMove <= 0) return { cycles, moves, donor }
   const recipients = ops
     .filter((n) => n.id !== donor.id)
     .sort((a, b) => Math.abs(a.step_number - donor.step_number) - Math.abs(b.step_number - donor.step_number) || a.step_number - b.step_number)

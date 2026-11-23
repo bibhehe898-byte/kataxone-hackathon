@@ -111,26 +111,34 @@ export const useVsmStore = create(persist((set, get) => ({
   // Синхронизация с активным предприятием (useEnterpriseStore): цеха и этапы VENIO-C
   // отображаются в Редакторе КПСЦ. id узлов: `n-<id>`, id цехов: `ws-<id>`.
   syncFromEnterprise: (enterprise) => {
-    if (!enterprise?.workshops?.length) return
+    if (!enterprise) return
     const takt = enterprise.takt_time_sec || 120
-    const enterpriseWorkshops = enterprise.workshops.map((ws) => {
-      const ops = ws.nodes
+    // Сохраняем позиции/названия уже отрисованных узлов: иначе каждая синхронизация
+    // (автобалансировка, изменение такта) откатывала ручную раскладку в сетку.
+    const prevNodes = new Map(get().workshops.flatMap((w) => (w.nodes ?? []).map((n) => [n.id, n])))
+    const enterpriseWorkshops = (enterprise.workshops ?? []).map((ws) => {
+      const ops = (ws.nodes ?? [])
         .filter((n) => n.kind === 'operation' || n.kind === 'control')
         .sort((a, b) => a.step_number - b.step_number)
-      const nodes = ops.map((n, i) => ({
-        id: `n-${n.id}`,
-        type: 'vsm',
-        position: { x: 20 + (i % 5) * 270, y: 60 + Math.floor(i / 5) * 230 },
-        data: {
-          label: n.name,
-          kind: n.kind,
-          cycleTime: n.cycle_time_sec,
-          leadTime: n.cycle_time_sec,
-          load: Math.round((n.cycle_time_sec / takt) * 100),
-          cost: n.cost !== undefined ? n.cost : (n.cost_value || 0),
-          bottleneck: n.is_bottleneck,
-        },
-      }))
+      const nodes = ops.map((n, i) => {
+        // Загрузка = cycle_time / takt * 100 (одна цифра после запятой), без хардкода.
+        const load = takt ? Math.round(((n.cycle_time_sec || 0) / takt) * 1000) / 10 : 0
+        const prev = prevNodes.get(`n-${n.id}`)
+        return {
+          id: `n-${n.id}`,
+          type: 'vsm',
+          position: prev?.position ?? { x: 20 + (i % 5) * 270, y: 60 + Math.floor(i / 5) * 230 },
+          data: {
+            label: prev?.data?.label ?? n.name,
+            kind: n.kind,
+            cycleTime: n.cycle_time_sec,
+            leadTime: n.cycle_time_sec,
+            load,
+            cost: n.cost !== undefined ? n.cost : (n.cost_value || 0),
+            bottleneck: load > 90,
+          },
+        }
+      })
       const edges = nodes.slice(1).map((n, i) => createEdge(nodes[i].id, n.id))
       return { id: `ws-${ws.id}`, name: ws.name, nodes, edges }
     })
@@ -140,6 +148,7 @@ export const useVsmStore = create(persist((set, get) => ({
       // с предприятием стирала бы пользовательские цеха и ломала активную вкладку.
       const localWorkshops = state.workshops.filter((w) => String(w.id).startsWith('w-'))
       const workshops = [...enterpriseWorkshops, ...localWorkshops]
+      if (!workshops.length) return { workshops, activeWorkshopId: null }
       const keep = workshops.some((w) => w.id === state.activeWorkshopId)
       return { workshops, activeWorkshopId: keep ? state.activeWorkshopId : workshops[0].id }
     })
@@ -261,6 +270,7 @@ export const useVsmStore = create(persist((set, get) => ({
         }
 
         return {
+          ...workshop,
           nodes: [...workshop.nodes, newNode],
           edges: lastNode ? [...workshop.edges, createEdge(lastNode.id, id)] : workshop.edges,
         }
@@ -370,7 +380,7 @@ export const useVsmStore = create(persist((set, get) => ({
     version < 6 ? { workshops: cloneFlow(INITIAL_WORKSHOPS) } : persistedState,
   merge: (persistedState, currentState) => {
     // Страховка: если битые данные всё же просочились (цех без id) — генерируем id.
-    const workshops = Array.isArray(persistedState.workshops)
+    const workshops = Array.isArray(persistedState?.workshops)
       ? persistedState.workshops.map((workshop) =>
           workshop?.id ? workshop : { ...workshop, id: generateWorkshopId() },
         )

@@ -1,5 +1,6 @@
 import { Clock, Gauge, Timer, Wallet } from 'lucide-react'
 import { Handle, Position } from '@xyflow/react'
+import { heatInfo } from '../utils/metrics'
 
 const KIND_LABELS = {
   operation: 'Операция',
@@ -9,9 +10,13 @@ const KIND_LABELS = {
 
 export default function VsmNode({ data, selected }) {
   const isBottleneck = data.bottleneck ?? (data.load ?? 0) > 90
+  const heat = heatInfo(data.load ?? 0)
+  // Зелёная рамка при нормальной загрузке (после автобалансировки N8 = 80%).
+  const heatStyle = isBottleneck || heat.key !== 'ok' ? undefined : { borderColor: heat.color, boxShadow: `0 0 0 1px ${heat.color}55` }
 
   return (
     <div
+      style={heatStyle}
       className={`vsm-node vsm-node--${data.kind ?? 'operation'}${selected ? ' is-selected' : ''}${isBottleneck ? ' is-bottleneck' : ''}`}
     >
       <Handle type="target" position={Position.Left} className="vsm-handle" />

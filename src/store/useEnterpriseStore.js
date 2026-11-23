@@ -76,7 +76,7 @@ export const useEnterpriseStore = create(
         const active = enterprises.find((e) => e.id === activeId)
         let wsId = state.activeWorkshopId
         if (!active?.workshops.some((w) => w.id === wsId)) wsId = findRounds(active).r1?.id ?? active?.workshops[0]?.id ?? null
-        set({ enterprises, online, loading: false, activeEnterpriseId: activeId, activeWorkshopId: wsId, balanced: {}, originalBaseline: {} })
+        set({ enterprises, online, loading: false, activeEnterpriseId: activeId, activeWorkshopId: wsId, balanced: {}, balanceLog: {}, originalBaseline: {} })
         if (active) syncVsm(active)
       },
 
@@ -183,7 +183,10 @@ export const useEnterpriseStore = create(
         if (get().activeEnterpriseId === id) {
           const first = get().enterprises[0]
           if (first) get().selectEnterprise(first.id)
-          else set({ activeEnterpriseId: null, activeWorkshopId: null })
+          else {
+            set({ activeEnterpriseId: null, activeWorkshopId: null })
+            syncVsm({ workshops: [] })
+          }
         }
         return true
       },
@@ -194,6 +197,7 @@ export const useEnterpriseStore = create(
         if (!ent) return
         const merged = decorateEnterprise({ ...ent, ...patch, takt_time_sec: undefined })
         set((s) => replaceEnterprise(s, merged))
+        syncVsm(merged) // такт изменился -> загрузка узлов в графе пересчитывается
         if (isLocalId(ent.id)) {
           set((s) => ({ localEnterprises: s.localEnterprises.map((e) => (e.id === ent.id ? merged : e)) }))
           return
@@ -211,11 +215,14 @@ export const useEnterpriseStore = create(
         const next = decorateEnterprise({
           ...ent,
           workshops: ent.workshops.map((w) =>
-            w.id !== workshopId ? w : { ...w, nodes: w.nodes.map((n) => (n.id === nodeId ? { ...n, cycle_time_sec: Number(sec) || 0 } : n)) },
+            w.id !== workshopId ? w : { ...w, nodes: w.nodes.map((n) => (String(n.id) === String(nodeId) ? { ...n, cycle_time_sec: Number(sec) || 0 } : n)) },
           ),
         })
         set((s) => replaceEnterprise(s, next))
         syncVsm(next)
+        if (isLocalId(ent.id)) {
+          set((s) => ({ localEnterprises: s.localEnterprises.map((e) => (e.id === ent.id ? next : e)) }))
+        }
       },
 
       fetchAutobalancePreview: async () => {

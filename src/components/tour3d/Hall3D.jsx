@@ -169,6 +169,24 @@ export default function Hall3D({ workshop, takt, showHeat, showSpaghetti, select
     ? nodes
     : nodes.map((n) => ({ ...n, load_percent: 60, is_bottleneck: false }))
 
+  useEffect(() => {
+    const handleResize = () => {
+      // Small delay helps with maximizing window or similar heavy reflow
+      setTimeout(() => {
+        const gl = rendererRef.current
+        if (!gl) return
+        const canvas = gl.domElement
+        const parent = canvas.parentElement
+        if (parent) {
+          gl.setSize(parent.clientWidth, parent.clientHeight)
+        }
+      }, 50)
+    }
+    
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
   if (!hasWebGL2) {
     return (
       <div className="tour3d-empty">

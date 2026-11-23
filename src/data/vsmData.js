@@ -31,120 +31,165 @@ const node = (id, x, data) => {
 export const FLOW_META = {
   before: {
     title: 'Как есть',
-    subtitle: 'Текущий поток — 6 этапов · узкое место: сборка мембранного узла (95%)',
+    subtitle: 'Раунд 1 — 10 этапов · узкое место: Установка 6 болтов (142.5%)',
   },
   after: {
     title: 'Как будет',
-    subtitle: 'Целевой поток — 6 этапов · загрузка мембранного узла снижена до 70%',
+    subtitle: 'Раунд 2 — 10 этапов · узкое место: Сборка пульта (85%)',
   },
 }
 
 export const initialBeforeFlow = {
   nodes: [
-    node('assembly_pilot', 20, {
-      label: 'Сборка узла пилота',
+    node('n1', 20, {
+      label: 'Сборка корпуса пилота и крышки нижней',
       kind: 'operation',
-      cycleTime: 4,
-      load: 60,
-      cost: 250,
+      cycleTime: 81,
+      load: 67.5,
     }),
-    node('assembly_membrane', 270, {
-      label: 'Сборка мембранного узла',
+    node('n2', 270, {
+      label: 'Сборка корпуса управления и крышки верхней',
       kind: 'operation',
-      cycleTime: 12,
-      load: 95,
-      cost: 500,
-      bottleneck: true,
+      cycleTime: 66,
+      load: 55.0,
     }),
-    node('assembly_regulator', 520, {
-      label: 'Сборка регулятора',
+    node('n3', 520, {
+      label: 'Сборка дросселя',
       kind: 'operation',
-      cycleTime: 5,
-      load: 70,
-      cost: 300,
+      cycleTime: 13,
+      load: 10.8,
     }),
-    node('fittings', 770, {
-      label: 'Установка фитингов',
+    node('n4', 770, {
+      label: 'Установка тарелки и дросселя',
       kind: 'operation',
-      cycleTime: 3,
-      load: 50,
-      cost: 150,
+      cycleTime: 61,
+      load: 50.8,
     }),
-    node('qc_check', 1020, {
-      label: 'Контроль качества ОТК',
+    node('n5', 1020, {
+      label: 'Сборка мембраны',
+      kind: 'operation',
+      cycleTime: 35,
+      load: 29.2,
+    }),
+    node('n6', 1270, {
+      label: 'Сборка пробки',
+      kind: 'operation',
+      cycleTime: 39,
+      load: 32.5,
+    }),
+    node('n7', 1520, {
+      label: 'Сборка пульта управления',
+      kind: 'operation',
+      cycleTime: 102,
+      load: 85.0,
+    }),
+    node('n8', 1770, {
+      label: 'Установка 6 болтов в пульт управления',
+      kind: 'operation',
+      cycleTime: 171,
+      load: 142.5,
+      bottleneck: true
+    }),
+    node('n9', 2020, {
+      label: 'Установка штуцеров и патрубка в корпус пилота',
+      kind: 'operation',
+      cycleTime: 82,
+      load: 68.3,
+    }),
+    node('n10', 2270, {
+      label: 'Контрольная операция (ОТК)',
       kind: 'control',
-      cycleTime: 2,
-      load: 40,
-      cost: 100,
-    }),
-    node('packaging', 1270, {
-      label: 'Упаковка',
-      kind: 'operation',
-      cycleTime: 2,
-      load: 45,
-      cost: 200,
+      cycleTime: 22,
+      load: 18.3,
     }),
   ],
   edges: [
-    createEdge('assembly_pilot', 'assembly_membrane'),
-    createEdge('assembly_membrane', 'assembly_regulator'),
-    createEdge('assembly_regulator', 'fittings'),
-    createEdge('fittings', 'qc_check'),
-    createEdge('qc_check', 'packaging'),
+    createEdge('n1', 'n2'),
+    createEdge('n2', 'n3'),
+    createEdge('n3', 'n4'),
+    createEdge('n4', 'n5'),
+    createEdge('n5', 'n6'),
+    createEdge('n6', 'n7'),
+    createEdge('n7', 'n8'),
+    createEdge('n8', 'n9'),
+    createEdge('n9', 'n10'),
   ],
 }
 
 export const initialAfterFlow = {
   nodes: [
-    node('assembly_pilot', 20, {
-      label: 'Сборка узла пилота',
+    node('n1', 20, {
+      label: 'Сборка корпуса пилота и крышки нижней',
       kind: 'operation',
-      cycleTime: 4,
-      load: 60,
-      cost: 250,
+      cycleTime: 84,
+      load: 70.0,
     }),
-    node('assembly_membrane', 270, {
-      label: 'Сборка мембранного узла',
+    node('n2', 270, {
+      label: 'Сборка корпуса управления и крышки верхней',
       kind: 'operation',
-      cycleTime: 6,
-      load: 70,
-      cost: 500,
+      cycleTime: 68,
+      load: 56.7,
     }),
-    node('assembly_regulator', 520, {
-      label: 'Сборка регулятора',
+    node('n3', 520, {
+      label: 'Сборка дросселя',
       kind: 'operation',
-      cycleTime: 5,
-      load: 70,
-      cost: 300,
+      cycleTime: 56,
+      load: 46.7,
     }),
-    node('fittings', 770, {
-      label: 'Установка фитингов',
+    node('n4', 770, {
+      label: 'Установка тарелки и дросселя',
       kind: 'operation',
-      cycleTime: 3,
-      load: 50,
-      cost: 150,
+      cycleTime: 72,
+      load: 60.0,
     }),
-    node('qc_check', 1020, {
-      label: 'Контроль качества ОТК',
+    node('n5', 1020, {
+      label: 'Сборка мембраны',
+      kind: 'operation',
+      cycleTime: 88,
+      load: 73.3,
+    }),
+    node('n6', 1270, {
+      label: 'Сборка пробки',
+      kind: 'operation',
+      cycleTime: 54,
+      load: 45.0,
+    }),
+    node('n7', 1520, {
+      label: 'Сборка пульта управления',
+      kind: 'operation',
+      cycleTime: 102,
+      load: 85.0,
+      bottleneck: true
+    }),
+    node('n8', 1770, {
+      label: 'Установка 6 болтов в пульт управления',
+      kind: 'operation',
+      cycleTime: 96,
+      load: 80.0,
+    }),
+    node('n9', 2020, {
+      label: 'Установка штуцеров и патрубка в корпус пилота',
+      kind: 'operation',
+      cycleTime: 82,
+      load: 68.3,
+    }),
+    node('n10', 2270, {
+      label: 'Контрольная операция (ОТК)',
       kind: 'control',
-      cycleTime: 2,
-      load: 40,
-      cost: 100,
-    }),
-    node('packaging', 1270, {
-      label: 'Упаковка',
-      kind: 'operation',
-      cycleTime: 2,
-      load: 45,
-      cost: 200,
+      cycleTime: 22,
+      load: 18.3,
     }),
   ],
   edges: [
-    createEdge('assembly_pilot', 'assembly_membrane'),
-    createEdge('assembly_membrane', 'assembly_regulator'),
-    createEdge('assembly_regulator', 'fittings'),
-    createEdge('fittings', 'qc_check'),
-    createEdge('qc_check', 'packaging'),
+    createEdge('n1', 'n2'),
+    createEdge('n2', 'n3'),
+    createEdge('n3', 'n4'),
+    createEdge('n4', 'n5'),
+    createEdge('n5', 'n6'),
+    createEdge('n6', 'n7'),
+    createEdge('n7', 'n8'),
+    createEdge('n8', 'n9'),
+    createEdge('n9', 'n10'),
   ],
 }
 

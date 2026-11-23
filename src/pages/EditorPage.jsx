@@ -13,6 +13,7 @@ import '@xyflow/react/dist/style.css'
 import VsmNode from '../components/VsmNode'
 import { useVsmStore } from '../store/useVsmStore'
 import { useEnterpriseStore } from '../store/useEnterpriseStore'
+import { computeTakt } from '../utils/metrics'
 import './EditorPage.css'
 
 // Типы узлов вынесены на уровень модуля: объект создаётся ровно один раз и не
@@ -177,6 +178,11 @@ export default function EditorPage() {
   const nodes = activeWorkshop?.nodes ?? []
   const edges = activeWorkshop?.edges ?? []
 
+  const activeEnterprise = useEnterpriseStore(
+    (state) => state.enterprises.find((e) => e.id === state.activeEnterpriseId) ?? null,
+  )
+  const editorTakt = computeTakt(activeEnterprise ?? { shift_duration_sec: 1200, target_output: 10 })
+
   const handleSelectWorkshop = (id) => {
     if (!id) return
     setEditing(null)
@@ -243,12 +249,24 @@ export default function EditorPage() {
 
   const handleSave = (event) => {
     event.preventDefault()
+    const cycleTime = Math.max(0, toValidNumber(editing.cycleTime))
+    const load = Math.max(0, toValidNumber(editing.load))
     updateNode(editing.id, {
       label: editing.label,
-      cycleTime: Math.max(0, toValidNumber(editing.cycleTime)),
-      load: Math.min(100, Math.max(0, toValidNumber(editing.load))),
+      cycleTime,
+      load,
       cost: Math.max(0, toValidNumber(editing.cost)),
+      bottleneck: false,
     })
+    // Обратная синхронизация: граф -> предприятие -> 3D-тур.
+    // Узлы предприятия имеют id `n-<id>`, поэтому снимаем префикс.
+    const enterpriseStore = useEnterpriseStore.getState()
+    const ent = enterpriseStore.getActiveEnterprise()
+    const rawId = String(editing.id).replace(/^n-/, '')
+    if (ent && editing.id.startsWith('n-')) {
+      const ws = ent.workshops.find((w) => w.nodes.some((n) => String(n.id) === rawId))
+      if (ws) enterpriseStore.updateNodeCycle(ws.id, rawId, cycleTime)
+    }
     setEditing(null)
   }
 
@@ -315,7 +333,7 @@ export default function EditorPage() {
               <RotateCcw size={15} aria-hidden="true" />
               Сбросить
             </button>
-            <button type="button" className="btn btn--primary" onClick={addStep}>
+            <button type="button" className="btn btn--primary" onClick={addStep} disabled={!activeWorkshop}>
               <Plus size={16} aria-hidden="true" />
               Добавить этап
             </button>
@@ -341,6 +359,14 @@ export default function EditorPage() {
           </span>
         </div>
 
+        {!activeWorkshop && (
+          <p className="ent-muted" style={{ padding: 24 }}>
+            Нет цехов. Создайте цех кнопкой «Добавить цех» или выберите предприятие на Дашборде.
+          </p>
+        )}
+        {activeWorkshop && nodes.length === 0 && (
+          <p className="ent-muted" style={{ padding: '0 24px' }}>В цехе нет этапов — нажмите «Добавить этап».</p>
+        )}
         <FlowCanvas
           nodes={nodes}
           edges={edges}
@@ -450,7 +476,12 @@ export default function EditorPage() {
                   type="number"
                   min="0"
                   value={editing.cycleTime}
-                  onChange={(event) => setEditing((prev) => ({ ...prev, cycleTime: event.target.value }))}
+                  onChange={(event) => {
+                    const cycleTime = event.target.value
+                    const numCycleTime = Math.max(0, toValidNumber(cycleTime))
+                    const load = editorTakt ? Math.round((numCycleTime / editorTakt) * 1000) / 10 : 0
+                    setEditing((prev) => ({ ...prev, cycleTime, load }))
+                  }}
                   style={inputStyle}
                 />
               </label>
@@ -460,9 +491,13 @@ export default function EditorPage() {
                 <input
                   type="number"
                   min="0"
-                  max="100"
                   value={editing.load}
-                  onChange={(event) => setEditing((prev) => ({ ...prev, load: event.target.value }))}
+                  onChange={(event) => {
+                    const load = event.target.value
+                    const numLoad = Math.max(0, toValidNumber(load))
+                    const cycleTime = editorTakt ? Math.round((numLoad / 100) * editorTakt) : 0
+                    setEditing((prev) => ({ ...prev, load, cycleTime }))
+                  }}
                   style={inputStyle}
                 />
               </label>
