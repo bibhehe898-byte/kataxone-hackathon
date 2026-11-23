@@ -8,14 +8,15 @@ export const WAREHOUSE_POS = [3.0, 17.5]
 export const CLIENT_POS = [1.8, 1.5]
 const WAREHOUSE_LEG_SEC = [15, 15, 20, 15, 15, 10, 20, 15, 15]
 
-const S = (step, name, cycle, steps, pos, afterPos, afterCycle, components, tools, excess, kind = 'operation') => ({
-  step, name, cycle, steps, pos, afterPos, afterCycle, components, tools, excess, kind,
+const S = (step, name, cycle, steps, pos, afterPos, afterCycle, components, tools, excess, kind = 'operation', standardSteps = null) => ({
+  step, name, cycle, steps, pos, afterPos, afterCycle, components, tools, excess, kind, standardSteps,
 })
 
 export const STATIONS = [
   S(1, 'Оператор №1: Сборка корпуса пилота и крышки нижней', 81, [2, 3, 5, 2, 4, 5, 7, 54, 1], [4.2, 11.5], [4.15, 3.5], 84,
-    ['корпус пилота 2 шт.', 'крышка нижняя 2 шт.', 'дюза 4 шт.', 'кольцо резиновое дюзы 4 шт.', 'прокладка резиновая 2 шт.', 'винт М5×14 8 шт.', 'шайба тонкая 8 шт.'],
-    ['ключ шестигранный', 'тара', 'СИЗ (перчатки, очки)'], ['ключ гаечный 10×12']),
+    ['крышка нижняя 2 шт.', 'дюза 4 шт.', 'кольцо резиновое дюзы 4 шт.', 'прокладка резиновая 2 шт.', 'корпус 2 шт.', 'винт М5×14 8 шт.', 'шайба тонкая 8 шт.'],
+    ['ключи шестигранные', 'перчатки', 'очки'], ['гаечный ключ 10×12'], 'operation',
+    ['Взять крышку нижнюю: 2 с', 'Взять дюзы (2 шт.): 3 с', 'Установить дюзы: 5 с', 'Взять кольца: 2 с', 'Установить кольца: 4 с', 'Взять корпус и прокладку, установить: 5 с', 'Шаг 7: 7 с', 'Шаг 8: 54 с', 'Шаг 9: 1 с']),
   S(2, 'Оператор №2: Сборка корпуса управления и крышки верхней', 66, [3, 2, 2, 1, 6, 51, 1], [1.6, 6.2], [4.15, 5.5], 68,
     ['корпус пилота 2 шт.', 'крышка верхняя 2 шт.', 'кольцо металлическое 2 шт.', 'кольцо сетчатое 2 шт.', 'шайба-решётка 2 шт.', 'винт М5×14 8 шт.', 'шайба тонкая 8 шт.'],
     ['ключ шестигранник'], ['ключ гаечный 10×12']),
@@ -62,7 +63,7 @@ function buildWorkshop(entId, isBaseline) {
     nodes.push(mk(s.step, s.kind, s.name, isBaseline ? s.cycle : s.afterCycle, isBaseline ? s.pos : s.afterPos, {
       batch_size: s.step === 10 ? 1 : 2,
       tools_required: s.tools, excess_items_5s: s.excess, components: s.components,
-      standard_steps: s.steps.map((sec, i) => `Шаг ${i + 1}: ${sec} с`),
+      standard_steps: s.standardSteps || s.steps.map((sec, i) => `Шаг ${i + 1}: ${sec} с`),
     })),
   )
   nodes.push(mk(99, 'client', 'Клиент (зона приёмки изделия)', 0, CLIENT_POS, { batch_size: 1 }))

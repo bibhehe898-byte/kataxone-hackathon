@@ -42,21 +42,32 @@ STATIONS: List[dict] = [
         "name": "Оператор №1: Сборка корпуса пилота и крышки нижней",
         "cycle": 81,
         "steps": [2, 3, 5, 2, 4, 5, 7, 54, 1],
+        "standard_steps": [
+            "Взять крышку нижнюю: 2 с",
+            "Взять дюзы (2 шт.): 3 с",
+            "Установить дюзы: 5 с",
+            "Взять кольца: 2 с",
+            "Установить кольца: 4 с",
+            "Взять корпус и прокладку, установить: 5 с",
+            "Шаг 7: 7 с",
+            "Шаг 8: 54 с",
+            "Шаг 9: 1 с",
+        ],
         "pos": (4.2, 11.5),  # правый ряд
         "after_pos": (4.15, 3.5),
         "after_cycle": 84,
         "batch": 2,
         "components": [
-            "корпус пилота 2 шт.",
             "крышка нижняя 2 шт.",
             "дюза 4 шт.",
             "кольцо резиновое дюзы 4 шт.",
             "прокладка резиновая 2 шт.",
+            "корпус 2 шт.",
             "винт М5×14 8 шт.",
             "шайба тонкая 8 шт.",
         ],
-        "tools": ["ключ шестигранный", "тара", "СИЗ (перчатки, очки)"],
-        "excess": ["ключ гаечный 10×12"],
+        "tools": ["ключи шестигранные", "перчатки", "очки"],
+        "excess": ["гаечный ключ 10×12"],
     },
     {
         "step": 2,
@@ -240,7 +251,16 @@ AFTER_CYCLE_BY_OP: Dict[int, int] = {s["step"]: s["after_cycle"] for s in STATIO
 # Себестоимость 286.5к · НЗП 71.5к -> 74к.
 # ---------------------------------------------------------------------------
 INFOCENTER = {
-    "safety": {"incidents": 0, "violations": 0, "note": "0 происшествий и нарушений"},
+    "safety": {
+        "incidents": 0,
+        "violations": [
+            "Работа без СИЗ",
+            "Покидание рабочего места",
+            "Складирование тары в несколько ярусов",
+            "Использование мобильных телефонов",
+        ],
+        "note": "0 несчастных случаев; выявлены нарушения ОТ",
+    },
     "quality": {
         "first_pass_yield": 33.0,
         "defects": 7,
@@ -312,7 +332,7 @@ def _build_nodes(db: Session, workshop: models.Workshop, is_baseline: bool) -> D
             tools_required_json=_dumps(s["tools"]),
             excess_items_5s_json=_dumps(s["excess"]),
             components_json=_dumps(s["components"]),
-            standard_steps_json=_dumps(_std_steps(s["steps"])),
+            standard_steps_json=_dumps(s.get("standard_steps") or _std_steps(s["steps"])),
             is_baseline=is_baseline,
         )
         db.add(node)
