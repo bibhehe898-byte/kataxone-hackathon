@@ -126,9 +126,38 @@ function Route({ route, color, speed = 1 }) {
 }
 
 export default function Hall3D({ workshop, takt, showHeat, showSpaghetti, selectedId, onSelect }) {
-  const W = workshop.width_m ?? 6.15
-  const L = workshop.length_m ?? 18.4
-  const routes = useMemo(() => buildRoutes(workshop), [workshop])
+  const processedWorkshop = useMemo(() => {
+    if (!workshop) return workshop
+    const W = workshop.width_m ?? 6.15
+    const L = workshop.length_m ?? 18.4
+    let newX = 1.0
+    let newY = L - 2.0
+    
+    let hasChanges = false
+    const nodes = (workshop.nodes ?? []).map(n => {
+      const isValid = n.pos_x_m !== undefined && n.pos_x_m >= 0 && n.pos_x_m <= W &&
+                      n.pos_y_m !== undefined && n.pos_y_m >= 0 && n.pos_y_m <= L
+      if (!isValid) {
+        hasChanges = true
+        const assignedX = newX
+        const assignedY = newY
+        newX += 1.5
+        if (newX > W - 1) {
+          newX = 1.0
+          newY -= 2.0
+          if (newY < 2) newY = L - 2.0
+        }
+        return { ...n, pos_x_m: assignedX, pos_y_m: assignedY }
+      }
+      return n
+    })
+    
+    return hasChanges ? { ...workshop, nodes } : workshop
+  }, [workshop])
+
+  const W = processedWorkshop.width_m ?? 6.15
+  const L = processedWorkshop.length_m ?? 18.4
+  const routes = useMemo(() => buildRoutes(processedWorkshop), [processedWorkshop])
   // Контур пола создаётся один раз и освобождается при размонтировании (иначе утечка на каждый рендер).
   const floorEdges = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(W, 0.02, L)), [W, L])
   useEffect(() => () => floorEdges.dispose(), [floorEdges])
@@ -161,7 +190,7 @@ export default function Hall3D({ workshop, takt, showHeat, showSpaghetti, select
     },
     [],
   )
-  const nodes = workshop.nodes ?? []
+  const nodes = processedWorkshop.nodes ?? []
   const wh = nodes.find((n) => n.kind === 'warehouse')
   const cl = nodes.find((n) => n.kind === 'client')
   // Тепловая карта выключена: нейтральные столы.
@@ -222,7 +251,7 @@ export default function Hall3D({ workshop, takt, showHeat, showSpaghetti, select
         <Table
           key={n.id}
           node={n}
-          workshop={workshop}
+          workshop={processedWorkshop}
           takt={takt}
           selected={selectedId === n.id}
           onSelect={onSelect}
