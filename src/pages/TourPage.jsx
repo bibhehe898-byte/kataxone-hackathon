@@ -1,4 +1,4 @@
-import { Box, Camera, Flame, MapPin, Plus, Route as RouteIcon, ScanEye, Upload } from 'lucide-react'
+import { Box, Camera, Flame, MapPin, Plus, Route as RouteIcon, ScanEye, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { assetUrl } from '../api/client'
@@ -32,6 +32,7 @@ export default function TourPage() {
   const setActiveWorkshop = useEnterpriseStore((s) => s.setActiveWorkshop)
   const setPanorama = useEnterpriseStore((s) => s.setPanorama)
   const addPoi = useEnterpriseStore((s) => s.addPoi)
+  const deletePoi = useEnterpriseStore((s) => s.deletePoi)
   const tourFocusNodeId = useEnterpriseStore((s) => s.tourFocusNodeId)
   const setTourFocusNodeId = useEnterpriseStore((s) => s.setTourFocusNodeId)
 
@@ -321,15 +322,31 @@ export default function TourPage() {
               <li
                 key={p.id ?? `draft-${i}`}
                 onClick={() => viewerRef.current?.lookAt(p.pitch, p.yaw, 70, 800)}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
               >
-                <strong>{p.title}</strong>
-                {p.metric_before && (
-                  <small>
-                    {p.metric_before} → {p.metric_after}
-                  </small>
-                )}
-                {p.case_problem && <small>Проблема: {p.case_problem}</small>}
-                {p.case_solution && <small>Решение: {p.case_solution}</small>}
+                <div>
+                  <strong>{p.title}</strong>
+                  {p.metric_before && (
+                    <small>
+                      {p.metric_before} → {p.metric_after}
+                    </small>
+                  )}
+                  {p.case_problem && <small>Проблема: {p.case_problem}</small>}
+                  {p.case_solution && <small>Решение: {p.case_solution}</small>}
+                </div>
+                <button
+                  type="button"
+                  title="Удалить"
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px', opacity: 0.6, color: 'inherit' }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (window.confirm('Удалить точку интереса?')) {
+                      deletePoi(workshop.id, p.id)
+                    }
+                  }}
+                >
+                  <X size={14} />
+                </button>
               </li>
             ))}
           </ul>

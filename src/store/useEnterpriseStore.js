@@ -338,6 +338,27 @@ export const useEnterpriseStore = create(
         return saved
       },
 
+      deletePoi: async (workshopId, poiId) => {
+        const ent = get().getActiveEnterprise()
+        if (!ent) return false
+        try {
+          if (!isLocalId(workshopId) && !String(poiId).startsWith('lp-')) {
+            await api(`/api/workshops/${workshopId}/pois/${poiId}`, { method: 'DELETE' })
+          }
+        } catch {
+          // ignore offline delete error
+        }
+        const next = {
+          ...ent,
+          workshops: ent.workshops.map((w) => (w.id === workshopId ? { ...w, pois: w.pois.filter((p) => p.id !== poiId) } : w)),
+        }
+        set((s) => replaceEnterprise(s, next))
+        if (isLocalId(ent.id)) {
+          set((s) => ({ localEnterprises: s.localEnterprises.map((e) => (e.id === ent.id ? next : e)) }))
+        }
+        return true
+      },
+
       takt: () => computeTakt(get().getActiveEnterprise() ?? { shift_duration_sec: 1200, target_output: 10 }),
     }),
     {
