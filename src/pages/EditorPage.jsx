@@ -475,11 +475,12 @@ export default function EditorPage() {
                 <input
                   type="number"
                   min="0"
+                  step="any"
                   value={editing.cycleTime}
                   onChange={(event) => {
                     const cycleTime = event.target.value
                     const numCycleTime = Math.max(0, toValidNumber(cycleTime))
-                    const load = editorTakt ? Math.round((numCycleTime / editorTakt) * 1000) / 10 : 0
+                    const load = editorTakt ? Number(((numCycleTime / editorTakt) * 100).toFixed(1)) : 0
                     setEditing((prev) => ({ ...prev, cycleTime, load }))
                   }}
                   style={inputStyle}
@@ -491,11 +492,12 @@ export default function EditorPage() {
                 <input
                   type="number"
                   min="0"
+                  step="any"
                   value={editing.load}
                   onChange={(event) => {
                     const load = event.target.value
                     const numLoad = Math.max(0, toValidNumber(load))
-                    const cycleTime = editorTakt ? Math.round((numLoad / 100) * editorTakt) : 0
+                    const cycleTime = editorTakt ? Number(((numLoad / 100) * editorTakt).toFixed(1)) : 0
                     setEditing((prev) => ({ ...prev, load, cycleTime }))
                   }}
                   style={inputStyle}
